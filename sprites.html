@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cord City Sprites</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Inter:wght@400;600&display=swap">
+<style>
+  /* Layout: a dark workbench; one big scene up top, then a sprite catalog grid. */
+  :root {
+    --bg: #14161f;
+    --panel: #1d2030;
+    --line: #2c3046;
+    --fg: #e8e6f0;
+    --muted: #9a98ae;
+    --accent: #f2cf4a;
+    --grass: #5c9d42;
+    --display: "Silkscreen", ui-monospace, monospace;
+    --body: "Inter", system-ui, -apple-system, sans-serif;
+    color-scheme: dark;
+  }
+  html, body { background: var(--bg); color: var(--fg); }
+  body { font: 15px/1.5 var(--body); margin: 0; }
+  .wrap {
+    max-width: 1100px; margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 28px 48px;
+    display: flex; flex-direction: column; gap: 28px;
+  }
+  header { display: flex; flex-direction: column; gap: 8px; }
+  h1 { font: 700 clamp(26px, 6vw, 40px)/1.1 var(--display); margin: 0; letter-spacing: .02em; text-wrap: balance; }
+  h1 span { color: var(--accent); }
+  h2 { font: 400 16px/1.2 var(--display); margin: 0 0 12px; color: var(--accent); letter-spacing: .06em; text-transform: uppercase; }
+  p { margin: 0; color: var(--muted); max-width: 65ch; }
+  .scene {
+    background: radial-gradient(ellipse at 50% 40%, #232842, var(--bg) 70%);
+    border: 1px solid var(--line); border-radius: 6px; padding: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .scene-view { overflow-x: auto; display: flex; justify-content: center; }
+  .scene canvas { image-rendering: pixelated; display: block; max-width: none; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .controls span { font-size: 13px; color: var(--muted); }
+  button {
+    font: 400 12px var(--display); color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+    padding: 7px 12px; border-radius: 4px; cursor: pointer;
+  }
+  button[aria-pressed="true"] { background: var(--accent); color: #1b1606; border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; align-items: end; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 8px 10px; min-width: 0;
+  }
+  .card canvas { image-rendering: pixelated; max-width: 100%; height: auto; }
+  .card b { font: 400 12px var(--display); letter-spacing: .04em; text-align: center; }
+  .card small { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  section { display: flex; flex-direction: column; }
+  #catalog { gap: 28px; }
+  .note { border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Cord City <span>Sprites</span></h1>
+    <p>Starter pixel-art set: one design for every building, plus one per density level for homes, shops and industry so you can see them grow. Everything is drawn at 32×16 pixels per tile and scaled up with sharp pixels.</p>
+  </header>
+
+  <section class="scene">
+    <div class="controls" role="group" aria-label="Zoom">
+      <span>Zoom</span>
+      <button data-scale="2" aria-pressed="false">2×</button>
+      <button data-scale="3" aria-pressed="true">3×</button>
+      <button data-scale="4" aria-pressed="false">4×</button>
+      <span id="anim">Water and turbines animate</span>
+    </div>
+    <div class="scene-view"><canvas id="scene"></canvas></div>
+  </section>
+
+  <section id="catalog"></section>
+
+  <p class="note">Smoke, cars, fire and power-line wires stay animated in code on top of these sprites. Once you confirm, these replace the current box graphics in the game.</p>
+</div>
+
+<script src="js/sprites.js"></script>
+<script>
+(() => {
+  const S = CordSprites.build();
+  const D = CordSprites.DIR;
+
+  // --- compose a ground + object sprite into one canvas ---
+  function compose(groundS, objS, scale) {
+    const h = Math.max(objS ? objS.h : 16, 16);
+    const c = document.createElement('canvas');
+    c.width = 32 * scale; c.height = h * scale;
+    const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+    if (groundS) g.drawImage(groundS.canvas, 0, (h - 16) * scale, 32 * scale, 16 * scale);
+    if (objS) g.drawImage(objS.canvas, 0, (h - objS.h) * scale, 32 * scale, objS.h * scale);
+    return c;
+  }
+
+  const groups = [
+    ['Ground', [
+      ['Grass', S.grass[0]], ['Water', S.water[0]], ['Road', S.road[D.PX | D.NX]], ['Road corner', S.road[D.PX | D.PY]],
+      ['Junction', S.road[15]], ['Residential zone', S.zoneRes], ['Commercial zone', S.zoneCom], ['Industrial zone', S.zoneInd],
+    ]],
+    ['Residential', [['House', S.lot, S.res1, 'Low density'], ['Apartments', S.lot, S.res2, 'Medium density'], ['Tower', S.lot, S.res3, 'High density']]],
+    ['Commercial', [['Corner shop', S.lot, S.com1, 'Low density'], ['Offices', S.lot, S.com2, 'Medium density'], ['Skyscraper', S.lot, S.com3, 'High density']]],
+    ['Industrial', [['Warehouse', S.lotInd, S.ind1, 'Low density'], ['Factory', S.lotInd, S.ind2, 'Medium density'], ['Heavy industry', S.lotInd, S.ind3, 'High density']]],
+    ['Power', [['Coal plant', S.lotInd, S.coal, '900 MW'], ['Wind turbine', S.grass[1], S.wind[0], '110 MW'], ['Power line', S.grass[0], S.pole]]],
+    ['Services & nature', [['Police', S.lot, S.police], ['Fire station', S.lot, S.fire], ['School', S.lot, S.school], ['Park', S.parkGround, S.park], ['Trees', S.grass[1], S.trees]]],
+  ];
+  const cat = document.getElementById('catalog');
+  for (const [title, items] of groups) {
+    const sec = document.createElement('section');
+    sec.innerHTML = `<h2>${title}</h2>`;
+    const grid = document.createElement('div'); grid.className = 'grid';
+    for (const it of items) {
+      const [name, a, b, sub] = it;
+      const isGround = a && !b && it.length === 2;
+      const card = document.createElement('div'); card.className = 'card';
+      card.appendChild(isGround ? compose(a, null, 4) : compose(a, b, 4));
+      card.insertAdjacentHTML('beforeend', `<b>${name}</b>${sub ? `<small>${sub}</small>` : ''}`);
+      grid.appendChild(card);
+    }
+    sec.appendChild(grid); cat.appendChild(sec);
+  }
+
+  // --- sample town ---
+  const N = 12;
+  const map = Array.from({ length: N }, () => Array(N).fill(null));
+  const set = (x, y, g, o) => { map[y][x] = { g, o }; };
+  for (let i = 0; i < N; i++) { set(i, 4, 'road'); set(5, i, 'road'); }
+  for (let i = 6; i < N; i++) set(i, 8, 'road');
+  // residential
+  [[0, 2, 'res1'], [1, 2, 'res1'], [2, 2, 'res1'], [3, 3, 'res1'], [4, 3, 'res2'], [4, 2, 'res2'], [0, 3, 'res1'], [1, 3, 'res2'],
+   [2, 3, 'res3'], [3, 2, 'res3'], [4, 1, 'res1'], [3, 1, 'res1']].forEach(([x, y, o]) => set(x, y, 'lot', o));
+  [[0, 1], [1, 1], [2, 1]].forEach(([x, y]) => set(x, y, 'zoneRes'));
+  set(0, 0, 'grass', 'trees'); set(1, 0, 'grass', 'trees'); set(2, 0, 'parkGround', 'park');
+  // commercial
+  [[6, 3, 'com1'], [7, 3, 'com2'], [8, 3, 'com3'], [9, 3, 'com2'], [10, 3, 'com1'], [6, 2, 'com1'], [7, 2, 'com3'], [8, 2, 'com1']]
+    .forEach(([x, y, o]) => set(x, y, 'lot', o));
+  [[9, 2], [10, 2], [11, 3]].forEach(([x, y]) => set(x, y, 'zoneCom'));
+  set(6, 5, 'lot', 'school'); set(7, 5, 'lot', 'police'); set(8, 5, 'lot', 'fire'); set(9, 5, 'parkGround', 'park');
+  // industrial
+  [[4, 5, 'ind1'], [4, 6, 'ind2'], [3, 6, 'ind3'], [4, 7, 'ind1'], [3, 5, 'ind2']].forEach(([x, y, o]) => set(x, y, 'lotInd', o));
+  [[2, 5], [2, 6]].forEach(([x, y]) => set(x, y, 'zoneInd'));
+  set(4, 9, 'lotInd', 'coal');
+  for (let y = 5; y < 9; y++) if (!map[y][5]) set(5, y, 'road');
+  set(4, 8, 'grass', 'pole');
+  // water + nature
+  for (let y = 9; y < N; y++) for (let x = 7; x < N; x++) if ((x - 9.5) ** 2 + (y - 11) ** 2 < 7) set(x, y, 'water');
+  [[0, 9], [1, 10], [0, 11], [2, 11], [1, 7], [6, 11], [11, 6], [10, 6]].forEach(([x, y]) => set(x, y, 'grass', 'trees'));
+  set(7, 10, 'grass', 'wind'); set(6, 9, 'grass', 'wind'); set(11, 9, 'grass', 'wind');
+
+  const isRoad = (x, y) => x >= 0 && y >= 0 && x < N && y < N && map[y][x] && map[y][x].g === 'road';
+  function groundSprite(x, y, t) {
+    const c = map[y][x];
+    if (!c) return S.grass[(x * 7 + y * 3) % 2];
+    if (c.g === 'road') return S.road[(isRoad(x + 1, y) ? 1 : 0) | (isRoad(x - 1, y) ? 2 : 0) | (isRoad(x, y + 1) ? 4 : 0) | (isRoad(x, y - 1) ? 8 : 0)];
+    if (c.g === 'water') return S.water[(t + x + y) % 3];
+    if (c.g === 'grass') return S.grass[(x + y) % 2];
+    return S[c.g];
+  }
+
+  const canvas = document.getElementById('scene'), g = canvas.getContext('2d');
+  let scale = 3, frame = 0;
+  function draw() {
+    const W = (N * 32 + 32) , Hh = N * 16 + 120;
+    canvas.width = W * scale; canvas.height = Hh * scale;
+    g.imageSmoothingEnabled = false;
+    const ox = W / 2 - 16, oy = 104;
+    const at = (x, y) => [ox + (x - y) * 16, oy + (x + y) * 8];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const [px, py] = at(x, y), sp = groundSprite(x, y, frame);
+      g.drawImage(sp.canvas, px * scale, py * scale, 32 * scale, 16 * scale);
+    }
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const c = map[y][x]; if (!c || !c.o) continue;
+      let sp = S[c.o]; if (Array.isArray(sp)) sp = sp[frame % sp.length];
+      const [px, py] = at(x, y);
+      g.drawImage(sp.canvas, px * scale, (py + 16 - sp.h) * scale, 32 * scale, sp.h * scale);
+    }
+  }
+  document.querySelectorAll('[data-scale]').forEach(b => b.addEventListener('click', () => {
+    scale = +b.dataset.scale;
+    document.querySelectorAll('[data-scale]').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+    draw();
+  }));
+  // Pick a sensible default for narrow screens.
+  if (window.innerWidth < 700) { scale = 2; document.querySelectorAll('[data-scale]').forEach(x => x.setAttribute('aria-pressed', x.dataset.scale === '2' ? 'true' : 'false')); }
+  draw();
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduce) setInterval(() => { frame = (frame + 1) % 3; draw(); }, 450);
+})();
+</script>
+</body>
+</html>
