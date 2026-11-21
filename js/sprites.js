@@ -163,13 +163,19 @@
   }
 
   const DIR = { PX: 1, NX: 2, PY: 4, NY: 8 };
-  function makeRoad(mask) {
+  function makeRoad(mask, hwy) {
     const s = new Sprite(16);
     const m = 0.15, links = [1, 2, 4, 8].filter(b => mask & b).length;
     ground(s, (x, y, tx, ty) => {
       const nPX = tx > 0.5 - m, nNX = tx < -0.5 + m, nPY = ty > 0.5 - m, nNY = ty < -0.5 + m;
       const walk = (nPX && !(mask & 1)) || (nNX && !(mask & 2)) || (nPY && !(mask & 4)) || (nNY && !(mask & 8)) ||
         ((nPX || nNX) && (nPY || nNY));
+      if (walk && hwy) {
+        // gravel shoulder with a white edge line
+        const edgeLine = (tx > 0.5 - m - 0.05 && tx <= 0.5 - m + 0.04) || (tx < -0.5 + m + 0.05 && tx >= -0.5 + m - 0.04) ||
+          (ty > 0.5 - m - 0.05 && ty <= 0.5 - m + 0.04) || (ty < -0.5 + m + 0.05 && ty >= -0.5 + m - 0.04);
+        return edgeLine ? '#eeeae0' : (hash(x, y, 4) % 3 ? '#8f8a7c' : '#7d786b');
+      }
       if (walk) {
         const inner = (tx > 0.5 - m - 0.05 && tx <= 0.5 - m + 0.04) || (tx < -0.5 + m + 0.05 && tx >= -0.5 + m - 0.04) ||
           (ty > 0.5 - m - 0.05 && ty <= 0.5 - m + 0.04) || (ty < -0.5 + m + 0.05 && ty >= -0.5 + m - 0.04);
@@ -180,9 +186,11 @@
       } else {
         const onX = Math.abs(ty) < 0.04 && ((tx >= 0 && mask & 1) || (tx <= 0 && mask & 2));
         const onY = Math.abs(tx) < 0.04 && ((ty >= 0 && mask & 4) || (ty <= 0 && mask & 8));
-        if (onX && Math.floor((tx + 0.5) * 8) % 2 === 0) return '#f2cf4a';
-        if (onY && Math.floor((ty + 0.5) * 8) % 2 === 0) return '#f2cf4a';
+        const lane = hwy ? '#f4f4f0' : '#f2cf4a';
+        if (onX && Math.floor((tx + 0.5) * 8) % 2 === 0) return lane;
+        if (onY && Math.floor((ty + 0.5) * 8) % 2 === 0) return lane;
       }
+      if (hwy) return hash(x, y, 11) % 9 === 0 ? '#363a43' : '#3e434c';
       return hash(x, y, 11) % 9 === 0 ? '#444954' : '#4d525d';
     });
     return s;
@@ -233,6 +241,8 @@
     SPRITES.water = [makeWater(0), makeWater(1), makeWater(2)];
     SPRITES.road = [];
     for (let m = 0; m < 16; m++) SPRITES.road[m] = makeRoad(m);
+    SPRITES.highway = [];
+    for (let m = 0; m < 16; m++) SPRITES.highway[m] = makeRoad(m, true);
     SPRITES.zoneRes = makeZone('#4fbf5a', 3);
     SPRITES.zoneCom = makeZone('#4b8ee8', 4);
     SPRITES.zoneInd = makeZone('#e5b52a', 6);
@@ -392,6 +402,20 @@
       for (let i = 0; i < 4; i++) { s.px(10 + i * 2, s.cy - 4 + i, '#7a4a2a'); s.px(11 + i * 2, s.cy - 4 + i, '#7a4a2a'); }
       // fountain jet
       s.px(16, s.cy - 3, '#bfe3fb'); s.px(15, s.cy - 2, '#8cc4ee'); s.px(16, s.cy - 2, '#8cc4ee'); s.px(17, s.cy - 2, '#8cc4ee');
+    });
+    // Green highway sign that marks where the region's highway enters the map
+    SPRITES.hwySign = obj(50, s => {
+      const top = s.cy - 36;
+      for (let y = top + 8; y <= s.cy + 3; y++) { s.px(5, y, '#9aa0a6'); s.px(26, y, '#9aa0a6'); s.px(6, y, '#6b7076'); s.px(27, y, '#6b7076'); }
+      for (let y = top; y <= top + 11; y++) for (let x = 3; x <= 28; x++) {
+        const edge = y === top || y === top + 11 || x === 3 || x === 28;
+        s.px(x, y, edge ? '#eef2ee' : '#1f7a45');
+      }
+      // arrow and two lines of "text"
+      for (let x = 6; x <= 12; x++) s.px(x, top + 5, '#ffffff');
+      s.px(11, top + 4, '#ffffff'); s.px(11, top + 6, '#ffffff'); s.px(10, top + 3, '#ffffff'); s.px(10, top + 7, '#ffffff');
+      for (let x = 15; x <= 25; x++) { if (x % 3) s.px(x, top + 3, '#ffffff'); if (x % 4) s.px(x, top + 7, '#d7eadc'); }
+      for (let x = 3; x <= 28; x++) s.px(x, top + 12, OUT);
     });
     SPRITES.pole = obj(40, s => {
       const top = s.cy - 26;

@@ -10,14 +10,15 @@
 
   const T = {
     GRASS: 0, WATER: 1, TREE: 2, ROAD: 3, RES: 4, COM: 5, IND: 6,
-    POWER: 7, PARK: 8, POLICE: 9, FIRE: 10, SCHOOL: 11, LINE: 12, WIND: 13,
+    POWER: 7, PARK: 8, POLICE: 9, FIRE: 10, SCHOOL: 11, LINE: 12, WIND: 13, HWY: 14,
   };
+  const isRoad = t => t === T.ROAD || t === T.HWY;
   const isZone = t => t === T.RES || t === T.COM || t === T.IND;
   const isService = t => t === T.POWER || t === T.WIND || t === T.POLICE || t === T.FIRE || t === T.SCHOOL;
   const conducts = t => t >= T.ROAD && t !== T.PARK;
 
   const NAMES = ['Grass', 'Water', 'Trees', 'Road', 'Residential', 'Commercial', 'Industrial',
-    'Coal Power Plant', 'Park', 'Police Station', 'Fire Station', 'School', 'Power Line', 'Wind Turbine'];
+    'Coal Power Plant', 'Park', 'Police Station', 'Fire Station', 'School', 'Power Line', 'Wind Turbine', 'Regional Highway'];
   const UPKEEP = { [T.ROAD]: 0.25, [T.LINE]: 0.1, [T.POWER]: 100, [T.WIND]: 12, [T.PARK]: 1.5,
     [T.POLICE]: 50, [T.FIRE]: 50, [T.SCHOOL]: 70 };
   const POWER_CAP = { [T.POWER]: 900, [T.WIND]: 110 };
@@ -55,13 +56,16 @@
   let roadDist, pow, pol, crime, land, cPol, cFire, cEdu; // derived maps
   let netId, nearRoad, traffic, commute;              // road networks and commuting
   const ROAD_CAP = 450;     // commuters one road tile carries before it jams
+  const capOf = i => (type[i] === T.HWY ? ROAD_CAP * 3 : ROAD_CAP);   // the highway is much wider
   const NO_ROUTE = 255;     // commute value for homes that can't reach any job
   let nets = [];            // per road network: zone counts, residents and jobs
   let routes = [];          // sample home-to-work paths, used by the cars
+  let truckRoutes = [];     // sample factory-to-highway paths, used by the trucks
+  const HWY_LEN = 7;        // highway tiles placed inward from the map edge
   let S;                                              // scalar game state
   const demand = { R: 0, C: 0, I: 0 };
   const stats = { pop: 0, comJobs: 0, indJobs: 0, powCap: 0, powUse: 0, unpowered: 0, roads: 0,
-    commuters: 0, jammed: 0, jamTile: -1, noJobHomes: 0, noJobTile: -1, isolated: 0, isolatedTile: -1 };
+    commuters: 0, freight: 0, inbound: 0, exportJobs: 0, gateNet: -1, jammed: 0, jamTile: -1, noJobHomes: 0, noJobTile: -1, isolated: 0, isolatedTile: -1 };
   let lastBudget = null;
   let mapsDirty = true;
 
@@ -113,9 +117,45 @@
       funds: 20000, day: 0, month: 0, year: 2000, tax: 9, speed: 1, name: 'Cord City',
       milestone: 0, cam: null, seed,
     };
+    placeHighway();
     mapsDirty = true;
     cars.length = 0;
   }
+
+  // ---------- Regional highway ----------
+  // A highway enters from the middle of one map edge. New residents arrive by it,
+  // factories export along it, and regional commuters drive in on it.
+  function placeHighway() {
+    const sides = [
+      { x: 0, y: null, dx: 1, dy: 0 }, { x: null, y: 0, dx: 0, dy: 1 },
+      { x: W - 1, y: null, dx: -1, dy: 0 }, { x: null, y: H - 1, dx: 0, dy: -1 },
+    ];
+    let best = null;
+    for (const sd of sides) {
+      for (let o = 0; o <= 18; o++) {
+        for (const sign of [1, -1]) {
+          const c = (W >> 1) + o * sign;
+          const x0 = sd.x === null ? c : sd.x, y0 = sd.y === null ? c : sd.y;
+          let water = 0, built = 0;
+          for (let k = 0; k < HWY_LEN; k++) {
+            const i = idx(x0 + sd.dx * k, y0 + sd.dy * k), t = type[i];
+            if (t === T.WATER) water++;
+            else if (t !== T.GRASS && t !== T.TREE) built++;
+          }
+          const score = water * 100 + built * 10 + o + Math.random() * 3;
+          if (!best || score < best.score) best = { score, x: x0, y: y0, dx: sd.dx, dy: sd.dy };
+        }
+      }
+    }
+    for (let k = 0; k < HWY_LEN; k++) {
+      const i = idx(best.x + best.dx * k, best.y + best.dy * k);
+      type[i] = T.HWY; lvl[i] = 0; fire[i] = 0;
+    }
+    S.gate = { x: best.x, y: best.y, dx: best.dx, dy: best.dy,
+      ex: best.x + best.dx * (HWY_LEN - 1), ey: best.y + best.dy * (HWY_LEN - 1) };
+    mapsDirty = true;
+  }
+  const gateIndex = () => (S && S.gate ? idx(S.gate.x, S.gate.y) : -1);
 
   // ---------- Simulation ----------
   const idx = (x, y) => y * W + x;
@@ -129,7 +169,7 @@
     const q = new Int32Array(N);
     let n = 0;
     for (let s0 = 0; s0 < N; s0++) {
-      if (type[s0] !== T.ROAD || netId[s0] >= 0) continue;
+      if (!isRoad(type[s0]) || netId[s0] >= 0) continue;
       let qh = 0, qt = 0; q[qt++] = s0; netId[s0] = n;
       while (qh < qt) {
         const i = q[qh++], x = i % W, y = (i / W) | 0;
@@ -137,13 +177,13 @@
           const nx = x + dx, ny = y + dy;
           if (!inb(nx, ny)) continue;
           const j = idx(nx, ny);
-          if (type[j] === T.ROAD && netId[j] < 0) { netId[j] = n; q[qt++] = j; }
+          if (isRoad(type[j]) && netId[j] < 0) { netId[j] = n; q[qt++] = j; }
         }
       }
       n++;
     }
     let qh = 0, qt = 0;
-    for (let i = 0; i < N; i++) if (type[i] === T.ROAD) { roadDist[i] = 0; nearRoad[i] = i; q[qt++] = i; }
+    for (let i = 0; i < N; i++) if (isRoad(type[i])) { roadDist[i] = 0; nearRoad[i] = i; q[qt++] = i; }
     while (qh < qt) {
       const i = q[qh++], d = roadDist[i];
       if (d >= 3) continue;
@@ -164,6 +204,13 @@
       else if (t === T.COM) { k.com++; k.jobs += COM_JOBS[l]; }
       else { k.ind++; k.jobs += IND_JOBS[l]; }
     }
+    // Which network reaches the highway? Its spare jobs can be filled by regional commuters.
+    const g = gateIndex(), gn = g >= 0 && isRoad(type[g]) ? netId[g] : -1;
+    nets.forEach((k, n) => {
+      k.connected = n === gn;
+      k.outsideShare = k.connected && k.jobs ? Math.max(0, Math.min(0.6, (k.jobs - k.pop * 0.55) / k.jobs)) : 0;
+    });
+    stats.gateNet = gn;
   }
 
   // Does this zone have the partners it needs on its own road network?
@@ -174,28 +221,60 @@
     return type[i] === T.RES ? k.com + k.ind > 0 : k.res > 0;
   }
 
-  // Route every home's workers along the road network to the nearest job,
-  // adding up how many commuters use each road tile.
-  function computeTraffic() {
-    traffic.fill(0); commute.fill(NO_ROUTE);
-    const jd = new Int16Array(N).fill(-1), q = new Int32Array(N);
-    let qh = 0, qt = 0;
-    for (let i = 0; i < N; i++) {
-      const t = type[i];
-      if ((t === T.COM || t === T.IND) && lvl[i] && roadDist[i] <= 3) {
-        const r = nearRoad[i];
-        if (jd[r] < 0) { jd[r] = 0; q[qt++] = r; }
+  // Walk downhill on a road distance field from road tile r to the field's source,
+  // adding `amount` to every road tile on the way. Returns the path.
+  function walk(field, r, amount, seed) {
+    const path = [r];
+    let cur = r, h = (seed * 2654435761) >>> 0;
+    traffic[r] += amount;
+    while (field[cur] > 0) {
+      const x = cur % W, y = (cur / W) | 0;
+      let next = -1, cnt = 0;
+      h = (Math.imul(h, 1103515245) + 12345) >>> 0;
+      for (const [dx, dy] of DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (!inb(nx, ny)) continue;
+        const j = idx(nx, ny);
+        if (field[j] === field[cur] - 1) { cnt++; if (next < 0 || ((h >>> (8 + cnt)) % cnt) === 0) next = j; }
       }
+      cur = next; path.push(cur); traffic[cur] += amount;
     }
+    return path;
+  }
+
+  // Distance along roads from a set of source road tiles (-1 = unreachable).
+  function roadField(sources) {
+    const f = new Int16Array(N).fill(-1), q = new Int32Array(N);
+    let qh = 0, qt = 0;
+    for (const r of sources) if (f[r] < 0) { f[r] = 0; q[qt++] = r; }
     while (qh < qt) {
       const i = q[qh++], x = i % W, y = (i / W) | 0;
       for (const [dx, dy] of DIRS) {
         const nx = x + dx, ny = y + dy;
         if (!inb(nx, ny)) continue;
         const j = idx(nx, ny);
-        if (type[j] === T.ROAD && jd[j] < 0) { jd[j] = jd[i] + 1; q[qt++] = j; }
+        if (isRoad(type[j]) && f[j] < 0) { f[j] = f[i] + 1; q[qt++] = j; }
       }
     }
+    return f;
+  }
+
+  // Keep a fixed-size random sample of paths for the vehicles.
+  function sample(list, item, seen, max) {
+    if (list.length < max) list.push(item);
+    else if (Math.random() < max / (seen + 1)) list[(Math.random() * max) | 0] = item;
+  }
+
+  // Route every home's workers to the nearest job, factory freight out to the highway,
+  // and regional commuters in from it, adding up the load on each road tile.
+  function computeTraffic() {
+    traffic.fill(0); commute.fill(NO_ROUTE);
+    const jobRoads = [];
+    for (let i = 0; i < N; i++) {
+      const t = type[i];
+      if ((t === T.COM || t === T.IND) && lvl[i] && roadDist[i] <= 3) jobRoads.push(nearRoad[i]);
+    }
+    const jd = roadField(jobRoads);
     const paths = [], homes = [];
     let commuters = 0, noJob = 0, noJobTile = -1, isolated = 0, isolatedTile = -1;
     for (let i = 0; i < N; i++) {
@@ -205,41 +284,51 @@
       if (jd[r] < 0) { noJob++; noJobTile = i; continue; }
       const workers = RES_CAP[lvl[i]] * 0.55;
       commuters += workers;
-      const path = [r];
-      let cur = r, h = (i * 2654435761) >>> 0;
-      traffic[r] += workers;
-      while (jd[cur] > 0) {
-        const x = cur % W, y = (cur / W) | 0;
-        let next = -1, cnt = 0;
-        h = (Math.imul(h, 1103515245) + 12345) >>> 0;
-        for (const [dx, dy] of DIRS) {
-          const nx = x + dx, ny = y + dy;
-          if (!inb(nx, ny)) continue;
-          const j = idx(nx, ny);
-          if (jd[j] === jd[cur] - 1) { cnt++; if (next < 0 || ((h >>> (8 + cnt)) % cnt) === 0) next = j; }
-        }
-        cur = next; path.push(cur); traffic[cur] += workers;
-      }
-      paths.push(path); homes.push(i);
+      paths.push(walk(jd, r, workers, i)); homes.push(i);
     }
-    routes = [];
+
+    // The highway: trucks carry exports out, regional commuters drive in to spare jobs.
+    routes = []; truckRoutes = [];
+    let freight = 0, inbound = 0, exportJobs = 0, seenT = 0, seenC = 0;
+    const g = gateIndex();
+    if (g >= 0 && isRoad(type[g])) {
+      const hd = roadField([g]);
+      for (let i = 0; i < N; i++) {
+        const t = type[i];
+        if (!(t === T.COM || t === T.IND) || !lvl[i] || roadDist[i] > 3) continue;
+        const r = nearRoad[i];
+        if (hd[r] < 0) continue;
+        if (t === T.IND) {
+          const trucks = IND_JOBS[lvl[i]] * 0.15;
+          freight += trucks; exportJobs += IND_JOBS[lvl[i]];
+          const p = walk(hd, r, trucks * 2, i + 7);      // a truck takes the road space of two cars
+          if (p.length > 2) sample(truckRoutes, p, seenT++, 80);
+        }
+        const share = nets[netId[i]].outsideShare;
+        if (share > 0) {
+          const amt = (t === T.COM ? COM_JOBS : IND_JOBS)[lvl[i]] * share;
+          inbound += amt;
+          const p = walk(hd, r, amt, i + 13);
+          if (p.length > 2) sample(routes, p, seenC++, 300);
+        }
+      }
+    }
+
     let jammed = 0, worst = 0, jamTile = -1;
     for (let i = 0; i < N; i++) {
-      if (type[i] !== T.ROAD) continue;
-      const c = traffic[i] / ROAD_CAP;
+      if (!isRoad(type[i])) continue;
+      const c = traffic[i] / capOf(i);
       if (c > 1) { jammed++; if (c > worst) { worst = c; jamTile = i; } }
     }
     for (let k = 0; k < paths.length; k++) {
       const p = paths[k];
       let tm = roadDist[homes[k]] + p.length;
-      for (const j of p) { const c = traffic[j] / ROAD_CAP; if (c > 1) tm += (c - 1) * 3; }
+      for (const j of p) { const c = traffic[j] / capOf(j); if (c > 1) tm += (c - 1) * 3; }
       commute[homes[k]] = Math.min(254, Math.round(tm));
-      if (p.length > 2) {
-        if (routes.length < 300) routes.push(p);
-        else if (Math.random() < 300 / (k + 1)) routes[(Math.random() * 300) | 0] = p;
-      }
+      if (p.length > 2) sample(routes, p, seenC++, 300);
     }
-    Object.assign(stats, { commuters: Math.round(commuters), jammed, jamTile, noJobHomes: noJob, noJobTile, isolated, isolatedTile });
+    Object.assign(stats, { commuters: Math.round(commuters), freight: Math.round(freight), inbound: Math.round(inbound),
+      exportJobs, jammed, jamTile, noJobHomes: noJob, noJobTile, isolated, isolatedTile });
   }
 
   function powerUse(i) {
@@ -305,7 +394,7 @@
       else if (t === T.FIRE) radial(cf, i, COVER_R[t], 100, 'max');
       else if (t === T.SCHOOL) radial(ce, i, COVER_R[t], 100, 'max');
       if (isZone(t) && l) radial(fc, i, 3, [0, 4, 9, 16][l] + (t === T.COM ? 3 : 0), 'add');
-      if (t === T.ROAD && traffic[i] > 30) radial(fp, i, 1, Math.min(30, traffic[i] / ROAD_CAP * 14), 'add');
+      if (isRoad(t) && traffic[i] > 30) radial(fp, i, 1, Math.min(30, traffic[i] / capOf(i) * 14), 'add');
     }
     for (let i = 0; i < N; i++) {
       cPol[i] = Math.min(100, cp[i]); cFire[i] = Math.min(100, cf[i]); cEdu[i] = Math.min(100, ce[i]);
@@ -327,7 +416,7 @@
       if (t === T.RES) pop += RES_CAP[l];
       else if (t === T.COM) cj += COM_JOBS[l];
       else if (t === T.IND) ij += IND_JOBS[l];
-      else if (t === T.ROAD) roads++;
+      else if (isRoad(t)) roads++;
     }
     stats.pop = pop; stats.comJobs = cj; stats.indJobs = ij; stats.roads = roads;
     const workers = pop * 0.55, jobs = cj + ij;
@@ -339,6 +428,8 @@
   }
 
   function maxLevel(i, t) {
+    // Without a road link to the highway nobody new moves in: the town stays a village.
+    if (!nets[netId[i]].connected) return 1;
     const lv = land[i];
     if (t === T.IND) return stats.pop >= 1200 && cEdu[i] > 20 ? 3 : stats.pop >= 150 ? 2 : 1;
     if (lv >= 58 && stats.pop >= (t === T.RES ? 700 : 1500)) return 3;
@@ -368,10 +459,12 @@
         if (commute[i] === NO_ROUTE) { if (l >= 1) s -= 0.35; }
         else s -= Math.max(0, commute[i] - 18) / 40;     // long commutes put people off
       } else if (k.pop === 0 && l >= 1) s -= 0.4;          // no customers or workers yet
-      const jam = traffic[nearRoad[i]] / ROAD_CAP;
+      const jam = traffic[nearRoad[i]] / capOf(nearRoad[i]);
       if (jam > 1) s -= (jam - 1) * 0.35;                  // nobody wants to live on a jammed street
       // Balance of jobs and workers on this network
-      const bal = Math.max(-1, Math.min(1, (k.jobs - k.pop * 0.55) / (k.pop * 0.55 + 40)));
+      if (t === T.IND && !k.connected) s -= 0.25;          // no export market without the highway
+      const workforce = k.pop * 0.55 * (k.connected ? 1.5 : 1);   // regional commuters help fill jobs
+      const bal = Math.max(-1, Math.min(1, (k.jobs - workforce) / (workforce + 40)));
       s += t === T.RES ? bal * 0.25 : -bal * 0.25;
       if (t === T.IND) s += (land[i] - 25) / 300;
       else s += (land[i] - 40) / 140 - crime[i] / 220;
@@ -421,11 +514,16 @@
     for (let i = 0; i < N; i++) { const u = UPKEEP[type[i]]; if (u) exp[type[i]] = (exp[type[i]] || 0) + u; }
     let totalExp = 0;
     for (const k in exp) { exp[k] = Math.round(exp[k]); totalExp += exp[k]; }
-    S.funds += resTax + bizTax - totalExp;
-    lastBudget = { resTax, bizTax, exp, totalExp, net: resTax + bizTax - totalExp, month: S.month, year: S.year };
+    const exports = Math.round(stats.exportJobs * 0.3);
+    S.funds += resTax + bizTax + exports - totalExp;
+    lastBudget = { resTax, bizTax, exports, exp, totalExp, net: resTax + bizTax + exports - totalExp, month: S.month, year: S.year };
     if (S.funds < 0) toast('⚠️ The city is in debt! Raise taxes or cut services.', 'bad');
     if (stats.unpowered > 20 && Math.random() < 0.5) toast('⚡ Not enough power! Build more plants.', 'warn');
     const at = i => ({ x: i % W, y: (i / W) | 0 });
+    const gn = stats.gateNet, linked = gn >= 0 && nets[gn] && nets[gn].res + nets[gn].com + nets[gn].ind > 0;
+    if (!linked && stats.pop >= 40 && S.month % 3 === 2 && S.gate) {
+      toast(`🛣️ Your town isn't linked to the highway. Build a road to its end at (${S.gate.ex}, ${S.gate.ey}) so new residents and trade can arrive.`, 'warn', { x: S.gate.ex, y: S.gate.ey });
+    }
     if (stats.isolated > 4 && S.month % 3 === 0) {
       const p = at(stats.isolatedTile);
       toast(`🔗 Zones near (${p.x}, ${p.y}) aren't connected by road to the zones they need. Homes need jobs, and businesses need homes.`, 'warn', p);
@@ -461,7 +559,7 @@
   // ---------- Building ----------
   function canPlace(tool, i) {
     const t = type[i];
-    if (tool.id === 'bulldoze') return t !== T.GRASS && t !== T.WATER;
+    if (tool.id === 'bulldoze') return t !== T.GRASS && t !== T.WATER && t !== T.HWY;
     if (tool.id === 'inspect') return true;
     if (t === T.WATER) return false;
     if (t === tool.type) return false;
@@ -504,7 +602,7 @@
   const CAR_COLORS = ['#ef4444', '#f8fafc', '#3b82f6', '#facc15', '#22c55e', '#111827', '#a855f7'];
   function roadNeighbors(i) {
     const x = i % W, y = (i / W) | 0, out = [];
-    for (const [dx, dy] of DIRS) { const nx = x + dx, ny = y + dy; if (inb(nx, ny) && type[idx(nx, ny)] === T.ROAD) out.push(idx(nx, ny)); }
+    for (const [dx, dy] of DIRS) { const nx = x + dx, ny = y + dy; if (inb(nx, ny) && isRoad(type[idx(nx, ny)])) out.push(idx(nx, ny)); }
     return out;
   }
   function updateCars(dt) {
@@ -518,18 +616,26 @@
         cars.push({ path, k: 0, a: path[0], b: path[1], t: Math.random(), c: col, v });
       } else if (stats.roads > 1) {
         const i = (Math.random() * N) | 0;
-        if (type[i] === T.ROAD) {
+        if (isRoad(type[i])) {
           const nb = roadNeighbors(i);
           if (nb.length) cars.push({ path: null, a: i, b: nb[(Math.random() * nb.length) | 0], t: 0, c: col, v });
         }
       }
     }
-    if (cars.length > target + 10) cars.length = target;
+    // Trucks: freight heading out to the highway (and empty ones coming back)
+    const trucks = cars.reduce((n, c) => n + (c.truck ? 1 : 0), 0);
+    const truckTarget = truckRoutes.length ? Math.min(60, Math.round(stats.freight / 3)) : 0;
+    if (trucks < truckTarget) {
+      const p = truckRoutes[(Math.random() * truckRoutes.length) | 0];
+      const path = Math.random() < 0.6 ? p : p.slice().reverse();
+      cars.push({ path, k: 0, a: path[0], b: path[1], t: Math.random(), c: Math.random() < 0.5 ? '#f97316' : '#e5e7eb', v: 0.9, truck: true });
+    }
+    if (cars.length > target + truckTarget + 10) cars.length = target + truckTarget;
     const mult = [0, 1, 2.2, 4][S.speed];
     for (let k = cars.length - 1; k >= 0; k--) {
       const c = cars[k];
-      if (type[c.a] !== T.ROAD || type[c.b] !== T.ROAD) { cars.splice(k, 1); continue; }
-      const jam = traffic[c.b] / ROAD_CAP;
+      if (!isRoad(type[c.a]) || !isRoad(type[c.b])) { cars.splice(k, 1); continue; }
+      const jam = traffic[c.b] / capOf(c.b);
       c.t += dt * c.v * mult * (jam > 0.8 ? 1 / (1 + (jam - 0.8) * 2.5) : 1);
       let done = false;
       while (c.t >= 1 && !done) {
@@ -613,8 +719,10 @@
 
   function roadMask(i) {
     const x = i % W, y = (i / W) | 0;
-    const r = (nx, ny) => inb(nx, ny) && type[idx(nx, ny)] === T.ROAD;
-    return (r(x + 1, y) ? 1 : 0) | (r(x - 1, y) ? 2 : 0) | (r(x, y + 1) ? 4 : 0) | (r(x, y - 1) ? 8 : 0);
+    const r = (nx, ny) => inb(nx, ny) && isRoad(type[idx(nx, ny)]);
+    let m = (r(x + 1, y) ? 1 : 0) | (r(x - 1, y) ? 2 : 0) | (r(x, y + 1) ? 4 : 0) | (r(x, y - 1) ? 8 : 0);
+    if (i === gateIndex()) m |= S.gate.dx === 1 ? 2 : S.gate.dx === -1 ? 1 : S.gate.dy === 1 ? 8 : 4;   // runs off the map
+    return m;
   }
 
   function groundSprite(i) {
@@ -622,6 +730,7 @@
     switch (t) {
       case T.WATER: return SPR.water[(Math.floor(time * 2.2) + i % W + ((i / W) | 0)) % 3];
       case T.ROAD: return SPR.road[roadMask(i)];
+      case T.HWY: return SPR.highway[roadMask(i)];
       case T.RES: return lvl[i] ? SPR.lot : SPR.zoneRes;
       case T.COM: return lvl[i] ? SPR.lot : SPR.zoneCom;
       case T.IND: return lvl[i] ? SPR.lotInd : SPR.zoneInd;
@@ -762,6 +871,17 @@
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.closePath(); ctx.fill();
     }
 
+    // The highway continues off the edge of the map, fading out.
+    if (S.gate) {
+      const g = S.gate, straight = g.dx ? 3 : 12;
+      for (let k = 1; k <= 5; k++) {
+        const [cx, cy] = center(g.x - g.dx * k, g.y - g.dy * k);
+        ctx.globalAlpha = 1 - k * 0.17;
+        sprite(SPR.grass[k & 1], cx, cy); sprite(SPR.highway[straight], cx, cy);
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // visible bounds in world px
     const left = -cam.x / cam.z - TW, right = (vw - cam.x) / cam.z + TW;
     const top = -cam.y / cam.z - TH, bottom = (vh - cam.y) / cam.z + 140;
@@ -780,8 +900,8 @@
             diamond(cx, cy, 0.9); ctx.fill();
           }
         } else if (overlay === 'traffic') {
-          if (type[i] === T.ROAD) {
-            const c = traffic[i] / ROAD_CAP;
+          if (isRoad(type[i])) {
+            const c = traffic[i] / capOf(i);
             ctx.fillStyle = c < 0.05 ? 'rgba(148,163,184,0.35)' : c < 0.6 ? 'rgba(34,197,94,0.6)' : c < 1 ? 'rgba(250,204,21,0.7)' : 'rgba(239,68,68,0.75)';
             diamond(cx, cy, 0.9); ctx.fill();
           } else { ctx.fillStyle = 'rgba(15,23,32,0.35)'; diamond(cx, cy, 1); ctx.fill(); }
@@ -803,9 +923,15 @@
       const ox = -dy * 0.15, oy = dx * 0.15;
       const cx = (fx + ox - fy - oy) * TW / 2, cy = (fx + ox + fy + oy) * TH / 2 + TH / 2;
       if (!visible(cx, cy)) continue;
-      ctx.fillStyle = c.c;
-      ctx.fillRect(cx - 3, cy - 3, 6, 4);
-      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(cx - 3, cy + 1, 6, 1);
+      if (c.truck) {
+        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(cx - 5, cy + 1, 10, 1);
+        ctx.fillStyle = c.c; ctx.fillRect(cx - 5, cy - 5, 7, 6);
+        ctx.fillStyle = '#2563eb'; ctx.fillRect(cx + 2, cy - 3, 3, 4);
+      } else {
+        ctx.fillStyle = c.c;
+        ctx.fillRect(cx - 3, cy - 3, 6, 4);
+        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(cx - 3, cy + 1, 6, 1);
+      }
     }
 
     // Preview highlights
@@ -835,7 +961,8 @@
       const cx = (x - y) * TW / 2, cy = (x + y) * TH / 2 + TH / 2;
       if (!visible(cx, cy)) continue;
       const i = y * W + x, t = type[i];
-      if (t !== T.GRASS && t !== T.WATER && t !== T.ROAD) drawObject(i, cx, cy);
+      if (t !== T.GRASS && t !== T.WATER && !isRoad(t)) drawObject(i, cx, cy);
+      if (i === gateIndex()) sprite(SPR.hwySign, cx, cy);
       if (showIcons && isZone(t)) {
         const by = lvl[i] ? objectTop(i, cy) - 6 : cy - 8;
         if (roadDist[i] > 3) badge(cx, by, '#f97316', '⛔');
@@ -878,7 +1005,7 @@
   const MW = 3, MH = 1.5;
   function drawMinimap() {
     mctx.fillStyle = '#0f1720'; mctx.fillRect(0, 0, mini.width, mini.height);
-    const cols = { [T.GRASS]: '#5b9648', [T.WATER]: '#2e78be', [T.TREE]: '#2f6b30', [T.ROAD]: '#9ca3af', [T.PARK]: '#7bd36a', [T.LINE]: '#7a6a5a' };
+    const cols = { [T.GRASS]: '#5b9648', [T.WATER]: '#2e78be', [T.TREE]: '#2f6b30', [T.ROAD]: '#9ca3af', [T.HWY]: '#f1f5f9', [T.PARK]: '#7bd36a', [T.LINE]: '#7a6a5a' };
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const i = y * W + x, t = type[i];
       let c = cols[t];
@@ -1065,6 +1192,7 @@
     const nums = (s.match(/-?\d+(\.\d+)?/g) || []).map(Number);
     if (word === 'help' || s === '?') return { help: true };
     if (word === 'undo' || word === 'u') return { undo: true };
+    if ((word === 'highway' || word === 'hwy' || /^(goto|go|view|look)\s+(highway|hwy)/.test(s)) && S.gate) return { goto: [S.gate.ex, S.gate.ey] };
     if (word === 'goto' || word === 'go' || word === 'view' || word === 'look') {
       if (nums.length !== 2 || nums.some(n => n < 0 || n >= W)) return { err: `Usage: goto X Y (0 to ${W - 1})` };
       return { goto: nums };
@@ -1257,6 +1385,9 @@
     $('date').textContent = `${MONTHS[S.month]} ${S.year}`;
     $('power').textContent = `${stats.powUse.toLocaleString()} / ${stats.powCap.toLocaleString()} MW`;
     $('power').classList.toggle('low', stats.unpowered > 0);
+    const gn = stats.gateNet, linked = gn >= 0 && nets[gn] && nets[gn].res + nets[gn].com + nets[gn].ind > 0;
+    $('hwy').textContent = linked ? 'Linked' : 'Not linked';
+    $('hwy').classList.toggle('low', !linked);
     const bar = (el, v) => {
       const f = $(el), pct = Math.abs(v) * 50;
       if (v >= 0) { f.style.bottom = '50%'; f.style.top = ''; f.style.height = pct + '%'; f.style.opacity = 1; }
@@ -1285,19 +1416,26 @@
       row('Road access', roadDist[i] <= 3 ? '✅' : '❌ (needs road ≤3)');
       if (roadDist[i] <= 3) {
         const k = nets[netId[i]];
+        row('Highway link', k.connected ? '✅' : '❌ village only');
         if (t === T.RES) {
           if (!hasPartner(i)) row('Jobs by road', '❌ none connected');
           else if (commute[i] === NO_ROUTE) row('Commute', l ? 'Jobs not built yet' : '–');
           else row('Commute', `${commute[i]} tiles` + (commute[i] > 30 ? ' (long)' : ''));
         } else row('Homes by road', k.res ? `${k.pop.toLocaleString()} residents` : '❌ none connected');
-        const jam = traffic[nearRoad[i]] / ROAD_CAP;
+        const jam = traffic[nearRoad[i]] / capOf(nearRoad[i]);
         if (jam > 1) row('Street', '🚗 Jammed');
       }
-    } else if (t === T.ROAD) {
-      const c = traffic[i] / ROAD_CAP;
-      row('Commuters', `${Math.round(traffic[i]).toLocaleString()} / ${ROAD_CAP}`);
+    } else if (isRoad(t)) {
+      const c = traffic[i] / capOf(i);
+      if (t === T.HWY) {
+        row('Leads to', 'The region');
+        row('Trucks out', stats.freight.toLocaleString() + '/day');
+        row('Commuters in', stats.inbound.toLocaleString() + '/day');
+      }
+      row('Commuters', `${Math.round(traffic[i]).toLocaleString()} / ${capOf(i)}`);
       row('Traffic', c < 0.05 ? 'Empty' : c < 0.6 ? 'Light' : c < 1 ? 'Busy' : '🚗 Jammed');
-      row('Upkeep', fmtMoney(UPKEEP[t]) + '/mo');
+      if (UPKEEP[t]) row('Upkeep', fmtMoney(UPKEEP[t]) + '/mo');
+      if (t === T.ROAD) row('Highway link', netId[i] === stats.gateNet ? '✅' : '❌');
     } else if (t === T.POWER || t === T.WIND) {
       row('Output', POWER_CAP[t] + ' MW'); row('Upkeep', fmtMoney(UPKEEP[t]) + '/mo');
     } else if (UPKEEP[t]) {
@@ -1335,7 +1473,8 @@
     else {
       html = `<p>Report for ${MONTHS[b.month === 0 ? 11 : b.month - 1]} ${b.month === 0 ? b.year - 1 : b.year}</p><table class="budget">
         <tr><td>Residential taxes</td><td>${fmtMoney(b.resTax)}</td></tr>
-        <tr><td>Business taxes</td><td>${fmtMoney(b.bizTax)}</td></tr>`;
+        <tr><td>Business taxes</td><td>${fmtMoney(b.bizTax)}</td></tr>
+        <tr><td>Exports via highway</td><td>${fmtMoney(b.exports || 0)}</td></tr>`;
       for (const k in b.exp) html += `<tr><td>${NAMES[k]} upkeep</td><td>-${fmtMoney(b.exp[k])}</td></tr>`;
       html += `<tr class="total"><td>Net per month</td><td>${fmtMoney(b.net)}</td></tr></table>`;
     }
@@ -1359,6 +1498,7 @@
       alloc();
       type.set(d.type); lvl.set(d.lvl); variety.set(d.variety);
       S = d.S; cars.length = 0;
+      if (!S.gate) placeHighway();
       if (S.cam) Object.assign(cam, S.cam);
       $('tax').value = S.tax; $('taxVal').textContent = S.tax + '%';
       mapsDirty = true; computeMaps(); computeStats(); setSpeed(S.speed); updateHUD(); drawMinimap(); clearUndo();

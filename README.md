@@ -31,6 +31,7 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 
 - Procedurally generated terrain with rivers, lakes and forests
 - Roads, power lines, and residential, commercial and industrial zoning, all placed by coordinates
+- A regional highway at the map edge: until your roads link to it the town stays a village; once linked, residents move in, factories export by truck for income, and regional commuters fill spare jobs (`goto highway`)
 - Road networks that matter: homes need a road route to jobs, businesses need homes on the same network, and every worker's commute is routed, so busy roads jam (Traffic overlay)
 - Undo for any build (button, `undo` command or Ctrl+Z), with a full refund
 - Coal and wind power, with a power grid that floods through connected tiles and has limited capacity

@@ -34,6 +34,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .stat span { font-weight: 600; font-variant-numeric: tabular-nums; }
 #funds.neg { color: #f87171; }
 #power.low { color: #fbbf24; }
+#hwy { color: var(--accent); }
+#hwy.low { color: #fbbf24; }
 .speed, .menu { display: flex; gap: 4px; }
 .menu { margin-left: auto; }
 .speed button, .menu button {
