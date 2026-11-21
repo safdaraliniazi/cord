@@ -31,6 +31,8 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 
 - Procedurally generated terrain with rivers, lakes and forests
 - Roads, power lines, and residential, commercial and industrial zoning, all placed by coordinates
+- Road networks that matter: homes need a road route to jobs, businesses need homes on the same network, and every worker's commute is routed, so busy roads jam (Traffic overlay)
+- Undo for any build (button,  command or Ctrl+Z), with a full refund
 - Coal and wind power, with a power grid that floods through connected tiles and has limited capacity
 - R/C/I demand simulation; buildings grow from low to high density depending on demand, land value, pollution and crime
 - Police, fire and school coverage; parks and trees raise land value

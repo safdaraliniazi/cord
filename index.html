@@ -47,6 +47,7 @@
       <select id="overlay">
         <option value="none">None</option>
         <option value="coords">Tile numbers</option>
+        <option value="traffic">Traffic</option>
         <option value="power">Power grid</option>
         <option value="land">Land value</option>
         <option value="pollution">Pollution</option>
@@ -86,6 +87,7 @@
       <input id="cmd" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
         placeholder="or type: road 10 10 to 20 10" aria-label="Command">
       <button type="submit">Run</button>
+      <button id="btnUndo" type="button" disabled aria-label="Undo last build">↶<span class="ul"> Undo</span></button>
     </form>
     <div id="cHint"></div>
   </section>
@@ -120,8 +122,9 @@ park 31 26
 bulldoze 25 27 to 26 28
 goto 32 32
 pause / play / help</pre>
-      <p>Other buildings: <code>wind</code>, <code>police</code>, <code>fire</code>, <code>school</code>, <code>line</code> (power line), <code>trees</code>, <code>inspect X Y</code>.</p>
-      <p><b>Growing the city:</b> zones grow when they have power, a road within 3 tiles, and demand (the R/C/I bars). Parks, schools, police and fire stations raise land value. Keep homes away from factory smoke.</p>
+      <p>Other buildings: <code>wind</code>, <code>police</code>, <code>fire</code>, <code>school</code>, <code>line</code> (power line), <code>trees</code>, <code>inspect X Y</code>. Made a mistake? Press <b>↶ Undo</b> or type <code>undo</code> to take back the last build and get your money back.</p>
+      <p><b>Roads connect your city.</b> Zones only work together through connected roads: homes need a road route to jobs (commercial or industrial zones), and businesses need homes on the same road network. Zones marked <span style="color:#c084fc">⇄</span> have no partners connected. Every worker drives to the nearest job, so busy roads jam. Jams slow growth and add pollution. Use the Traffic overlay to find them, then build another route around.</p>
+      <p><b>Growing the city:</b> zones also need power, a road within 3 tiles, and demand (the R/C/I bars). Parks, schools, police and fire stations raise land value. Keep homes away from factory smoke.</p>
       <p class="keys"><b>Moving the map:</b> drag to pan, scroll or pinch to zoom, tap a tile to see its coordinates and details. Keys: <code>/</code> focuses the console, ↑ and ↓ recall earlier commands, Space pauses, Esc clears.</p>
       <button class="close">Let's build</button>
     </div>

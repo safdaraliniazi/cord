@@ -53,9 +53,15 @@
   // ---------- State ----------
   let type, lvl, variety, fire;                       // persistent
   let roadDist, pow, pol, crime, land, cPol, cFire, cEdu; // derived maps
+  let netId, nearRoad, traffic, commute;              // road networks and commuting
+  const ROAD_CAP = 450;     // commuters one road tile carries before it jams
+  const NO_ROUTE = 255;     // commute value for homes that can't reach any job
+  let nets = [];            // per road network: zone counts, residents and jobs
+  let routes = [];          // sample home-to-work paths, used by the cars
   let S;                                              // scalar game state
   const demand = { R: 0, C: 0, I: 0 };
-  const stats = { pop: 0, comJobs: 0, indJobs: 0, powCap: 0, powUse: 0, unpowered: 0, roads: 0 };
+  const stats = { pop: 0, comJobs: 0, indJobs: 0, powCap: 0, powUse: 0, unpowered: 0, roads: 0,
+    commuters: 0, jammed: 0, jamTile: -1, noJobHomes: 0, noJobTile: -1, isolated: 0, isolatedTile: -1 };
   let lastBudget = null;
   let mapsDirty = true;
 
@@ -63,6 +69,8 @@
     type = new Uint8Array(N); lvl = new Uint8Array(N); variety = new Uint8Array(N); fire = new Uint8Array(N);
     roadDist = new Uint8Array(N); pow = new Uint8Array(N); pol = new Uint8Array(N); crime = new Uint8Array(N);
     land = new Uint8Array(N); cPol = new Uint8Array(N); cFire = new Uint8Array(N); cEdu = new Uint8Array(N);
+    netId = new Int32Array(N); nearRoad = new Int32Array(N); traffic = new Float32Array(N); commute = new Uint8Array(N);
+    nets = []; routes = [];
   }
 
   // ---------- Random / noise ----------
@@ -114,10 +122,28 @@
   const inb = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
   const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
+  // Label connected road networks, then attach every tile within 3 steps of a road
+  // to the network of its nearest road. Zones only "see" each other through a network.
   function computeRoadDist() {
-    roadDist.fill(255);
-    const q = new Int32Array(N); let qh = 0, qt = 0;
-    for (let i = 0; i < N; i++) if (type[i] === T.ROAD) { roadDist[i] = 0; q[qt++] = i; }
+    roadDist.fill(255); netId.fill(-1); nearRoad.fill(-1);
+    const q = new Int32Array(N);
+    let n = 0;
+    for (let s0 = 0; s0 < N; s0++) {
+      if (type[s0] !== T.ROAD || netId[s0] >= 0) continue;
+      let qh = 0, qt = 0; q[qt++] = s0; netId[s0] = n;
+      while (qh < qt) {
+        const i = q[qh++], x = i % W, y = (i / W) | 0;
+        for (const [dx, dy] of DIRS) {
+          const nx = x + dx, ny = y + dy;
+          if (!inb(nx, ny)) continue;
+          const j = idx(nx, ny);
+          if (type[j] === T.ROAD && netId[j] < 0) { netId[j] = n; q[qt++] = j; }
+        }
+      }
+      n++;
+    }
+    let qh = 0, qt = 0;
+    for (let i = 0; i < N; i++) if (type[i] === T.ROAD) { roadDist[i] = 0; nearRoad[i] = i; q[qt++] = i; }
     while (qh < qt) {
       const i = q[qh++], d = roadDist[i];
       if (d >= 3) continue;
@@ -126,9 +152,94 @@
         const nx = x + dx, ny = y + dy;
         if (!inb(nx, ny)) continue;
         const j = idx(nx, ny);
-        if (roadDist[j] > d + 1) { roadDist[j] = d + 1; q[qt++] = j; }
+        if (roadDist[j] > d + 1) { roadDist[j] = d + 1; netId[j] = netId[i]; nearRoad[j] = nearRoad[i]; q[qt++] = j; }
       }
     }
+    nets = Array.from({ length: n }, () => ({ res: 0, com: 0, ind: 0, pop: 0, jobs: 0 }));
+    for (let i = 0; i < N; i++) {
+      const t = type[i];
+      if (!isZone(t) || roadDist[i] > 3) continue;
+      const k = nets[netId[i]], l = lvl[i];
+      if (t === T.RES) { k.res++; k.pop += RES_CAP[l]; }
+      else if (t === T.COM) { k.com++; k.jobs += COM_JOBS[l]; }
+      else { k.ind++; k.jobs += IND_JOBS[l]; }
+    }
+  }
+
+  // Does this zone have the partners it needs on its own road network?
+  // Homes need jobs (commercial or industrial zones); businesses need homes.
+  function hasPartner(i) {
+    if (roadDist[i] > 3) return false;
+    const k = nets[netId[i]];
+    return type[i] === T.RES ? k.com + k.ind > 0 : k.res > 0;
+  }
+
+  // Route every home's workers along the road network to the nearest job,
+  // adding up how many commuters use each road tile.
+  function computeTraffic() {
+    traffic.fill(0); commute.fill(NO_ROUTE);
+    const jd = new Int16Array(N).fill(-1), q = new Int32Array(N);
+    let qh = 0, qt = 0;
+    for (let i = 0; i < N; i++) {
+      const t = type[i];
+      if ((t === T.COM || t === T.IND) && lvl[i] && roadDist[i] <= 3) {
+        const r = nearRoad[i];
+        if (jd[r] < 0) { jd[r] = 0; q[qt++] = r; }
+      }
+    }
+    while (qh < qt) {
+      const i = q[qh++], x = i % W, y = (i / W) | 0;
+      for (const [dx, dy] of DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (!inb(nx, ny)) continue;
+        const j = idx(nx, ny);
+        if (type[j] === T.ROAD && jd[j] < 0) { jd[j] = jd[i] + 1; q[qt++] = j; }
+      }
+    }
+    const paths = [], homes = [];
+    let commuters = 0, noJob = 0, noJobTile = -1, isolated = 0, isolatedTile = -1;
+    for (let i = 0; i < N; i++) {
+      if (isZone(type[i]) && roadDist[i] <= 3 && !hasPartner(i)) { isolated++; isolatedTile = i; }
+      if (type[i] !== T.RES || !lvl[i] || roadDist[i] > 3) continue;
+      const r = nearRoad[i];
+      if (jd[r] < 0) { noJob++; noJobTile = i; continue; }
+      const workers = RES_CAP[lvl[i]] * 0.55;
+      commuters += workers;
+      const path = [r];
+      let cur = r, h = (i * 2654435761) >>> 0;
+      traffic[r] += workers;
+      while (jd[cur] > 0) {
+        const x = cur % W, y = (cur / W) | 0;
+        let next = -1, cnt = 0;
+        h = (Math.imul(h, 1103515245) + 12345) >>> 0;
+        for (const [dx, dy] of DIRS) {
+          const nx = x + dx, ny = y + dy;
+          if (!inb(nx, ny)) continue;
+          const j = idx(nx, ny);
+          if (jd[j] === jd[cur] - 1) { cnt++; if (next < 0 || ((h >>> (8 + cnt)) % cnt) === 0) next = j; }
+        }
+        cur = next; path.push(cur); traffic[cur] += workers;
+      }
+      paths.push(path); homes.push(i);
+    }
+    routes = [];
+    let jammed = 0, worst = 0, jamTile = -1;
+    for (let i = 0; i < N; i++) {
+      if (type[i] !== T.ROAD) continue;
+      const c = traffic[i] / ROAD_CAP;
+      if (c > 1) { jammed++; if (c > worst) { worst = c; jamTile = i; } }
+    }
+    for (let k = 0; k < paths.length; k++) {
+      const p = paths[k];
+      let tm = roadDist[homes[k]] + p.length;
+      for (const j of p) { const c = traffic[j] / ROAD_CAP; if (c > 1) tm += (c - 1) * 3; }
+      commute[homes[k]] = Math.min(254, Math.round(tm));
+      if (p.length > 2) {
+        if (routes.length < 300) routes.push(p);
+        else if (Math.random() < 300 / (k + 1)) routes[(Math.random() * 300) | 0] = p;
+      }
+    }
+    Object.assign(stats, { commuters: Math.round(commuters), jammed, jamTile, noJobHomes: noJob, noJobTile, isolated, isolatedTile });
   }
 
   function powerUse(i) {
@@ -179,6 +290,7 @@
 
   function computeMaps() {
     computeRoadDist();
+    computeTraffic();
     computePower();
     const fp = new Float32Array(N), fc = new Float32Array(N), fg = new Float32Array(N), fw = new Float32Array(N);
     const cp = new Float32Array(N), cf = new Float32Array(N), ce = new Float32Array(N);
@@ -193,7 +305,7 @@
       else if (t === T.FIRE) radial(cf, i, COVER_R[t], 100, 'max');
       else if (t === T.SCHOOL) radial(ce, i, COVER_R[t], 100, 'max');
       if (isZone(t) && l) radial(fc, i, 3, [0, 4, 9, 16][l] + (t === T.COM ? 3 : 0), 'add');
-      if (t === T.ROAD && stats.pop > 1500) fp[i] += 6;
+      if (t === T.ROAD && traffic[i] > 30) radial(fp, i, 1, Math.min(30, traffic[i] / ROAD_CAP * 14), 'add');
     }
     for (let i = 0; i < N; i++) {
       cPol[i] = Math.min(100, cp[i]); cFire[i] = Math.min(100, cf[i]); cEdu[i] = Math.min(100, ce[i]);
@@ -243,8 +355,24 @@
         if (l > 0 && Math.random() < 0.12) lvl[i]--;
         continue;
       }
+      // Zones need partners on the same road network: homes need jobs, businesses need homes.
+      if (!hasPartner(i)) {
+        if (l > 0 && Math.random() < 0.08) lvl[i]--;
+        continue;
+      }
+      const k = nets[netId[i]];
       const d = t === T.RES ? demand.R : t === T.COM ? demand.C : demand.I;
       let s = d;
+      if (t === T.RES) {
+        // Jobs zoned but not built yet: houses can appear, but nothing bigger.
+        if (commute[i] === NO_ROUTE) { if (l >= 1) s -= 0.35; }
+        else s -= Math.max(0, commute[i] - 18) / 40;     // long commutes put people off
+      } else if (k.pop === 0 && l >= 1) s -= 0.4;          // no customers or workers yet
+      const jam = traffic[nearRoad[i]] / ROAD_CAP;
+      if (jam > 1) s -= (jam - 1) * 0.35;                  // nobody wants to live on a jammed street
+      // Balance of jobs and workers on this network
+      const bal = Math.max(-1, Math.min(1, (k.jobs - k.pop * 0.55) / (k.pop * 0.55 + 40)));
+      s += t === T.RES ? bal * 0.25 : -bal * 0.25;
       if (t === T.IND) s += (land[i] - 25) / 300;
       else s += (land[i] - 40) / 140 - crime[i] / 220;
       if (t === T.RES) s -= pol[i] / 160;
@@ -297,6 +425,18 @@
     lastBudget = { resTax, bizTax, exp, totalExp, net: resTax + bizTax - totalExp, month: S.month, year: S.year };
     if (S.funds < 0) toast('⚠️ The city is in debt! Raise taxes or cut services.', 'bad');
     if (stats.unpowered > 20 && Math.random() < 0.5) toast('⚡ Not enough power! Build more plants.', 'warn');
+    const at = i => ({ x: i % W, y: (i / W) | 0 });
+    if (stats.isolated > 4 && S.month % 3 === 0) {
+      const p = at(stats.isolatedTile);
+      toast(`🔗 Zones near (${p.x}, ${p.y}) aren't connected by road to the zones they need. Homes need jobs, and businesses need homes.`, 'warn', p);
+    } else if (stats.noJobHomes > 4 && S.month % 3 === 1) {
+      const p = at(stats.noJobTile);
+      toast(`🏠 ${stats.noJobHomes} homes near (${p.x}, ${p.y}) can't reach any jobs yet.`, 'warn', p);
+    }
+    if (stats.jamTile >= 0 && stats.jammed > 2 && S.month % 2 === 0) {
+      const p = at(stats.jamTile);
+      toast(`🚗 Traffic jam at (${p.x}, ${p.y}). Build another road route around it.`, 'warn', p);
+    }
     const ms = [[100, 'Your settlement reached 100 residents'], [500, 'Village status: 500 residents!'],
       [2000, 'Town status: 2,000 residents!'], [8000, 'City status: 8,000 residents!'],
       [25000, 'Metropolis: 25,000 residents!']];
@@ -350,6 +490,7 @@
       const c = costAt(tool, i);
       if (S.funds - spent < c) { broke = true; need = c; break; }
       spent += c; placed++;
+      if (batch && !batch.tiles.has(i)) batch.tiles.set(i, [type[i], lvl[i], fire[i], variety[i]]);
       if (tool.id === 'bulldoze') { type[i] = T.GRASS; lvl[i] = 0; fire[i] = 0; }
       else { type[i] = tool.type; lvl[i] = 0; fire[i] = 0; variety[i] = (Math.random() * 256) | 0; }
     }
@@ -367,29 +508,43 @@
     return out;
   }
   function updateCars(dt) {
-    const target = Math.min(stats.roads * 0.6, stats.pop / 15, 350) | 0;
-    if (cars.length < target && stats.roads > 1) {
-      for (let k = 0; k < 5; k++) {
+    const target = routes.length ? Math.min(300, Math.round(stats.commuters / 10), routes.length * 3)
+      : Math.min(stats.roads * 0.2, 20) | 0;
+    for (let n = 0; n < 3 && cars.length < target; n++) {
+      const col = CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0], v = 1.2 + Math.random();
+      if (routes.length) {
+        const p = routes[(Math.random() * routes.length) | 0];
+        const path = Math.random() < 0.5 ? p : p.slice().reverse();   // to work, or home again
+        cars.push({ path, k: 0, a: path[0], b: path[1], t: Math.random(), c: col, v });
+      } else if (stats.roads > 1) {
         const i = (Math.random() * N) | 0;
         if (type[i] === T.ROAD) {
           const nb = roadNeighbors(i);
-          if (nb.length) cars.push({ a: i, b: nb[(Math.random() * nb.length) | 0], t: 0, c: CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0], v: 1.2 + Math.random() });
-          break;
+          if (nb.length) cars.push({ path: null, a: i, b: nb[(Math.random() * nb.length) | 0], t: 0, c: col, v });
         }
       }
     }
-    if (cars.length > target + 5) cars.length = target;
+    if (cars.length > target + 10) cars.length = target;
     const mult = [0, 1, 2.2, 4][S.speed];
     for (let k = cars.length - 1; k >= 0; k--) {
       const c = cars[k];
       if (type[c.a] !== T.ROAD || type[c.b] !== T.ROAD) { cars.splice(k, 1); continue; }
-      c.t += dt * c.v * mult;
-      while (c.t >= 1) {
+      const jam = traffic[c.b] / ROAD_CAP;
+      c.t += dt * c.v * mult * (jam > 0.8 ? 1 / (1 + (jam - 0.8) * 2.5) : 1);
+      let done = false;
+      while (c.t >= 1 && !done) {
         c.t -= 1;
-        const nb = roadNeighbors(c.b).filter(j => j !== c.a);
-        const prev = c.a; c.a = c.b;
-        c.b = nb.length ? nb[(Math.random() * nb.length) | 0] : prev;
+        if (c.path) {
+          c.k++;
+          if (c.k >= c.path.length - 1) { done = true; break; }
+          c.a = c.path[c.k]; c.b = c.path[c.k + 1];
+        } else {
+          const nb = roadNeighbors(c.b).filter(j => j !== c.a);
+          const prev = c.a; c.a = c.b;
+          c.b = nb.length ? nb[(Math.random() * nb.length) | 0] : prev;
+        }
       }
+      if (done) cars.splice(k, 1);
     }
   }
 
@@ -624,7 +779,13 @@
             ctx.fillStyle = pow[i] ? 'rgba(250,204,21,0.55)' : 'rgba(239,68,68,0.6)';
             diamond(cx, cy, 0.9); ctx.fill();
           }
-        } else {
+        } else if (overlay === 'traffic') {
+          if (type[i] === T.ROAD) {
+            const c = traffic[i] / ROAD_CAP;
+            ctx.fillStyle = c < 0.05 ? 'rgba(148,163,184,0.35)' : c < 0.6 ? 'rgba(34,197,94,0.6)' : c < 1 ? 'rgba(250,204,21,0.7)' : 'rgba(239,68,68,0.75)';
+            diamond(cx, cy, 0.9); ctx.fill();
+          } else { ctx.fillStyle = 'rgba(15,23,32,0.35)'; diamond(cx, cy, 1); ctx.fill(); }
+        } else if (overlay !== 'coords') {
           const [v, pal] = overlayValue(i);
           ctx.fillStyle = heat(v, pal); diamond(cx, cy, 1); ctx.fill();
         }
@@ -669,7 +830,7 @@
     }
 
     // Object pass (painter's order)
-    const showIcons = overlay === 'none' || overlay === 'power';
+    const showIcons = overlay === 'none' || overlay === 'power' || overlay === 'traffic';
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const cx = (x - y) * TW / 2, cy = (x + y) * TH / 2 + TH / 2;
       if (!visible(cx, cy)) continue;
@@ -678,6 +839,7 @@
       if (showIcons && isZone(t)) {
         const by = lvl[i] ? objectTop(i, cy) - 6 : cy - 8;
         if (roadDist[i] > 3) badge(cx, by, '#f97316', '⛔');
+        else if (!hasPartner(i)) badge(cx, by, '#c084fc', '⇄');
         else if (!pow[i] && (time * 1.5 | 0) % 2) badge(cx, by, '#facc15', '⚡');
       }
     }
@@ -838,6 +1000,7 @@
       return;
     }
     keys.add(e.key.toLowerCase());
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); keys.delete('z'); undo(); return; }
     if (e.key === ' ') { e.preventDefault(); setSpeed(S.speed ? 0 : 1); }
     if (e.key === 'Escape') clearConsole();
     if (e.key === '/' || e.key === 'Enter') { e.preventDefault(); $('cmd').focus(); }
@@ -890,7 +1053,8 @@
     if (tool.mode === 'single' && nums.length === 4) return { tool, err: `${tool.full || tool.label} goes on one tile. Usage: ${usage(tool)}` };
     if (nums.some(n => !Number.isInteger(n) || n < 0 || n >= W)) return { tool, err: `Coordinates must be whole numbers from 0 to ${W - 1}` };
     const a = idx(nums[0], nums[1]), b = nums.length === 4 ? idx(nums[2], nums[3]) : a;
-    return { tool, tiles: dragTiles(tool, a, b) };
+    const label = `${tool.id} ${nums[0]} ${nums[1]}` + (nums.length === 4 ? ` to ${nums[2]} ${nums[3]}` : '');
+    return { tool, tiles: dragTiles(tool, a, b), label };
   }
 
   function parseCommand(src) {
@@ -900,6 +1064,7 @@
     const word = (s.match(/^[a-z]+/) || [''])[0];
     const nums = (s.match(/-?\d+(\.\d+)?/g) || []).map(Number);
     if (word === 'help' || s === '?') return { help: true };
+    if (word === 'undo' || word === 'u') return { undo: true };
     if (word === 'goto' || word === 'go' || word === 'view' || word === 'look') {
       if (nums.length !== 2 || nums.some(n => n < 0 || n >= W)) return { err: `Usage: goto X Y (0 to ${W - 1})` };
       return { goto: nums };
@@ -927,6 +1092,12 @@
   function runOrder(o) {
     if (!o) return false;
     if (o.help) { $('helpModal').hidden = false; return true; }
+    if (o.undo) {
+      const lbl = batch && batch.label;
+      endBatch(); undo();
+      if (lbl) beginBatch(lbl);
+      return true;
+    }
     if (o.err) { say(o.err, 'bad'); return false; }
     if (o.speed !== undefined) { setSpeed(o.speed); return true; }
     if (o.goto) { centerCamera(o.goto[0], o.goto[1]); say(`Moved the view to (${o.goto[0]}, ${o.goto[1]})`); return true; }
@@ -973,6 +1144,7 @@
     if (!o) { h.textContent = defaultHint(); h.className = ''; return; }
     if (o.err) { h.textContent = o.err; h.className = 'bad'; return; }
     if (o.help) { h.textContent = 'Press Enter to open the help'; h.className = ''; return; }
+    if (o.undo) { h.textContent = undoStack.length ? `Press Enter to undo "${undoStack[undoStack.length - 1].label}"` : 'Nothing to undo'; h.className = ''; return; }
     if (o.goto) { h.textContent = `Press Enter to move the view to (${o.goto[0]}, ${o.goto[1]})`; h.className = ''; return; }
     if (o.speed !== undefined) { h.textContent = o.speed ? 'Press Enter to resume' : 'Press Enter to pause'; h.className = ''; return; }
     const tool = o.tool;
@@ -994,7 +1166,9 @@
   function buildFromForm() {
     const o = formOrder();
     if (!o) { say('Enter coordinates first', 'warn'); fields[0].focus(); return; }
+    beginBatch(o.label || '');
     const ok = runOrder(o);
+    endBatch();
     if (ok && o.tool && o.tool.id !== 'inspect') {
       if (o.tool.mode === 'line' && fields[2].value) {
         // Chain the next segment from where this one ended.
@@ -1024,10 +1198,46 @@
     const src = $('cmd').value;
     if (!src.trim()) return;
     history.push(src); hIdx = history.length;
+    const label = src.trim().replace(/\s+/g, ' ');
+    beginBatch(label.length > 40 ? label.slice(0, 39) + '…' : label);
     for (const part of src.split(/[;\n]+/)) if (part.trim()) runOrder(parseCommand(part));
+    endBatch();
     $('cmd').value = '';
     pending = null;
   });
+
+  // ---------- Undo ----------
+  // Each Build press or submitted command line is one undo step. Undo restores the
+  // tiles it changed and refunds what it cost.
+  const undoStack = [];
+  let batch = null;
+  function beginBatch(label) { batch = { label, tiles: new Map(), funds: S.funds }; }
+  function endBatch() {
+    if (batch && batch.tiles.size) {
+      batch.spent = batch.funds - S.funds;
+      undoStack.push(batch);
+      if (undoStack.length > 50) undoStack.shift();
+    }
+    batch = null;
+    updateUndo();
+  }
+  function undo() {
+    const b = undoStack.pop();
+    if (!b) { say('Nothing to undo', 'warn'); updateUndo(); return; }
+    for (const [i, v] of b.tiles) { type[i] = v[0]; lvl[i] = v[1]; fire[i] = v[2]; variety[i] = v[3]; }
+    S.funds += b.spent;
+    mapsDirty = true; computeMaps(); computeStats(); updateHUD(); drawMinimap();
+    focusTiles([...b.tiles.keys()]);
+    say(`Undid "${b.label}". Refunded ${fmtMoney(b.spent)}.`);
+    updateUndo();
+  }
+  function updateUndo() {
+    const btn = $('btnUndo');
+    btn.disabled = !undoStack.length;
+    btn.title = undoStack.length ? `Undo "${undoStack[undoStack.length - 1].label}" (Ctrl+Z)` : 'Nothing to undo';
+  }
+  function clearUndo() { undoStack.length = 0; updateUndo(); }
+  $('btnUndo').addEventListener('click', () => { undo(); });
 
   document.querySelectorAll('#speed button').forEach(b => b.addEventListener('click', () => setSpeed(+b.dataset.speed)));
   function setSpeed(s) {
@@ -1073,6 +1283,21 @@
       else row('Jobs', (t === T.COM ? COM_JOBS : IND_JOBS)[l]);
       row('Powered', pow[i] ? '✅' : '❌');
       row('Road access', roadDist[i] <= 3 ? '✅' : '❌ (needs road ≤3)');
+      if (roadDist[i] <= 3) {
+        const k = nets[netId[i]];
+        if (t === T.RES) {
+          if (!hasPartner(i)) row('Jobs by road', '❌ none connected');
+          else if (commute[i] === NO_ROUTE) row('Commute', l ? 'Jobs not built yet' : '–');
+          else row('Commute', `${commute[i]} tiles` + (commute[i] > 30 ? ' (long)' : ''));
+        } else row('Homes by road', k.res ? `${k.pop.toLocaleString()} residents` : '❌ none connected');
+        const jam = traffic[nearRoad[i]] / ROAD_CAP;
+        if (jam > 1) row('Street', '🚗 Jammed');
+      }
+    } else if (t === T.ROAD) {
+      const c = traffic[i] / ROAD_CAP;
+      row('Commuters', `${Math.round(traffic[i]).toLocaleString()} / ${ROAD_CAP}`);
+      row('Traffic', c < 0.05 ? 'Empty' : c < 0.6 ? 'Light' : c < 1 ? 'Busy' : '🚗 Jammed');
+      row('Upkeep', fmtMoney(UPKEEP[t]) + '/mo');
     } else if (t === T.POWER || t === T.WIND) {
       row('Output', POWER_CAP[t] + ' MW'); row('Upkeep', fmtMoney(UPKEEP[t]) + '/mo');
     } else if (UPKEEP[t]) {
@@ -1136,7 +1361,7 @@
       S = d.S; cars.length = 0;
       if (S.cam) Object.assign(cam, S.cam);
       $('tax').value = S.tax; $('taxVal').textContent = S.tax + '%';
-      mapsDirty = true; computeMaps(); computeStats(); setSpeed(S.speed); updateHUD(); drawMinimap();
+      mapsDirty = true; computeMaps(); computeStats(); setSpeed(S.speed); updateHUD(); drawMinimap(); clearUndo();
       if (!silent) toast('📂 City loaded');
       return true;
     } catch (err) { if (!silent) toast('Could not load save', 'bad'); return false; }
@@ -1166,7 +1391,7 @@
     generate((Math.random() * 1e9) | 0);
     cam.z = isPhone() ? 0.7 : 1; centerCamera(W / 2, H / 2);
     $('tax').value = S.tax; $('taxVal').textContent = S.tax + '%';
-    computeMaps(); computeStats(); setSpeed(1); updateHUD(); drawMinimap(); showInspect(-1);
+    computeMaps(); computeStats(); setSpeed(1); updateHUD(); drawMinimap(); showInspect(-1); clearUndo();
   }
 
   // ---------- Main loop ----------
@@ -1213,5 +1438,6 @@
   // Expose for debugging/tests
   window.cordCity = { T, get S() { return S; }, type, stats, demand, applyTool: (id, tiles) => applyTool(toolById[id], tiles), idx,
     simDay, refs: () => ({ type, lvl, pow, roadDist }),
-    run: src => src.split(/[;\n]+/).filter(p => p.trim()).map(p => runOrder(parseCommand(p))) };
+    run: src => { beginBatch(src); const r = src.split(/[;\n]+/).filter(p => p.trim()).map(p => runOrder(parseCommand(p))); endBatch(); return r; },
+    undo: () => undo(), traffic: () => traffic, commute: () => commute };
 })();
