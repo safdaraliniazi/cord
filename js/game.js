@@ -440,221 +440,96 @@
     ctx.lineTo(cx, cy + TH / 2 * s); ctx.lineTo(cx - TW / 2 * s, cy); ctx.closePath();
   }
 
-  // Draw an extruded box centred on (cx,cy) offset by (ox,oy) tile units.
-  function box(cx, cy, s, h, color, ox = 0, oy = 0, roof, windows) {
-    cx += (ox - oy) * TW / 2; cy += (ox + oy) * TH / 2;
-    const hw = TW / 2 * s, hh = TH / 2 * s;
-    // left face
-    ctx.fillStyle = shade(color, 0.78);
-    ctx.beginPath();
-    ctx.moveTo(cx - hw, cy); ctx.lineTo(cx, cy + hh); ctx.lineTo(cx, cy + hh - h); ctx.lineTo(cx - hw, cy - h); ctx.closePath(); ctx.fill();
-    // right face
-    ctx.fillStyle = shade(color, 0.6);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy + hh); ctx.lineTo(cx + hw, cy); ctx.lineTo(cx + hw, cy - h); ctx.lineTo(cx, cy + hh - h); ctx.closePath(); ctx.fill();
-    if (windows && h > 14) {
-      ctx.strokeStyle = windows; ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      for (let k = 7; k < h - 4; k += 7) {
-        ctx.moveTo(cx - hw + 3, cy - k + 1.5); ctx.lineTo(cx - 3, cy + hh - k - 1.5);
-        ctx.moveTo(cx + 3, cy + hh - k - 1.5); ctx.lineTo(cx + hw - 3, cy - k + 1.5);
-      }
-      ctx.stroke();
-    }
-    // top
-    ctx.fillStyle = roof || shade(color, 1.08);
-    diamond(cx, cy - h, s); ctx.fill();
-  }
-
-  function pitchedHouse(cx, cy, s, h, wall, roofCol, ox, oy) {
-    box(cx, cy, s, h, wall, ox, oy, shade(wall, 1));
-    cx += (ox - oy) * TW / 2; cy += (ox + oy) * TH / 2;
-    const hw = TW / 2 * s, hh = TH / 2 * s, top = cy - h, rh = 9 * s + 3;
-    ctx.fillStyle = roofCol;
-    ctx.beginPath();
-    ctx.moveTo(cx - hw, top); ctx.lineTo(cx, top + hh); ctx.lineTo(cx + hw / 2, top + hh / 2 - rh); ctx.lineTo(cx - hw / 2, top - hh / 2 - rh); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = shade(roofCol, 0.7);
-    ctx.beginPath();
-    ctx.moveTo(cx, top + hh); ctx.lineTo(cx + hw, top); ctx.lineTo(cx + hw / 2, top - hh / 2 + 0); ctx.lineTo(cx + hw / 2, top + hh / 2 - rh); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = shade(roofCol, 0.85);
-    ctx.beginPath();
-    ctx.moveTo(cx - hw, top); ctx.lineTo(cx - hw / 2, top - hh / 2 - rh); ctx.lineTo(cx + hw / 2, top + hh / 2 - rh); ctx.lineTo(cx + hw / 2, top - hh / 2); ctx.lineTo(cx, top - hh); ctx.closePath(); ctx.fill();
-  }
-
-  function tree(cx, cy, ox, oy, sc) {
-    cx += (ox - oy) * TW / 2; cy += (ox + oy) * TH / 2;
-    ctx.fillStyle = '#5b3a1e'; ctx.fillRect(cx - 1.5, cy - 6 * sc, 3, 6 * sc);
-    ctx.fillStyle = '#2f7d32';
-    ctx.beginPath(); ctx.moveTo(cx, cy - 26 * sc); ctx.lineTo(cx + 8 * sc, cy - 6 * sc); ctx.lineTo(cx - 8 * sc, cy - 6 * sc); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#3f9a43';
-    ctx.beginPath(); ctx.moveTo(cx, cy - 26 * sc); ctx.lineTo(cx - 8 * sc, cy - 6 * sc); ctx.lineTo(cx - 1, cy - 6 * sc); ctx.closePath(); ctx.fill();
-  }
-
+  // ---------- Pixel-art sprites (js/sprites.js) ----------
+  // Sprites are 32x16 px per tile natively and drawn at 2x in world space (64x32).
+  const SPR = window.CordSprites.build();
+  const SPX = TW / 32;
   const ZONE_TINT = { [T.RES]: '#4caf50', [T.COM]: '#3b82f6', [T.IND]: '#eab308' };
 
   function heat(v, palette) {
-    // v 0..100
     const t = v / 100;
     if (palette === 'good') return `hsla(${(t * 120) | 0},80%,50%,0.55)`;
     return `hsla(${(120 - t * 120) | 0},85%,50%,${0.15 + t * 0.5})`;
   }
 
-  function groundColor(i) {
-    const t = type[i], v = variety[i];
-    if (t === T.WATER) return null;
-    const base = (v & 7) - 4;
-    return `rgb(${88 + base},${150 + base * 2},${72 + base})`;
+  function sprite(sp, cx, cy) {
+    ctx.drawImage(sp.canvas, cx - TW / 2, cy + TH / 2 - sp.h * SPX, TW, sp.h * SPX);
   }
 
-  function drawGround(i, cx, cy) {
-    const t = type[i];
-    if (t === T.WATER) {
-      const w = Math.sin(time * 1.5 + (i % W) * 0.7 + ((i / W) | 0) * 0.5) * 6;
-      ctx.fillStyle = `rgb(${46 + w},${120 + w},${190 + w})`;
-      diamond(cx, cy, 1.02); ctx.fill();
-      return;
-    }
-    ctx.fillStyle = groundColor(i);
-    diamond(cx, cy, 1.02); ctx.fill();
-    if (t === T.ROAD) drawRoad(i, cx, cy);
-    else if (isZone(t)) {
-      if (lvl[i] === 0) {
-        ctx.fillStyle = ZONE_TINT[t] + '55'; diamond(cx, cy, 0.92); ctx.fill();
-        ctx.strokeStyle = ZONE_TINT[t]; ctx.lineWidth = 1.2; diamond(cx, cy, 0.8); ctx.stroke();
-      } else {
-        ctx.fillStyle = t === T.IND ? '#8b8270' : '#9aa39a'; diamond(cx, cy, 0.95); ctx.fill();
-      }
-    } else if (t === T.PARK) {
-      ctx.fillStyle = '#6cc25a'; diamond(cx, cy, 0.95); ctx.fill();
-      ctx.fillStyle = '#d9c99a'; diamond(cx, cy, 0.35); ctx.fill();
-    } else if (isService(t)) {
-      ctx.fillStyle = '#a5aaa5'; diamond(cx, cy, 0.95); ctx.fill();
-    }
-  }
-
-  function drawRoad(i, cx, cy) {
-    ctx.fillStyle = '#4b5563'; diamond(cx, cy, 1.0); ctx.fill();
+  function roadMask(i) {
     const x = i % W, y = (i / W) | 0;
-    // edge midpoints for +x, -x, +y, -y directions
-    const mids = [[TW / 4, TH / 4], [-TW / 4, -TH / 4], [-TW / 4, TH / 4], [TW / 4, -TH / 4]];
-    ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    let links = 0;
-    DIRS.forEach(([dx, dy], k) => {
-      const nx = x + dx, ny = y + dy;
-      if (inb(nx, ny) && type[idx(nx, ny)] === T.ROAD) {
-        ctx.moveTo(cx, cy); ctx.lineTo(cx + mids[k][0], cy + mids[k][1]); links++;
-      }
-    });
-    ctx.stroke(); ctx.setLineDash([]);
-    if (links > 2) { ctx.fillStyle = '#4b5563'; diamond(cx, cy, 0.3); ctx.fill(); }
+    const r = (nx, ny) => inb(nx, ny) && type[idx(nx, ny)] === T.ROAD;
+    return (r(x + 1, y) ? 1 : 0) | (r(x - 1, y) ? 2 : 0) | (r(x, y + 1) ? 4 : 0) | (r(x, y - 1) ? 8 : 0);
   }
+
+  function groundSprite(i) {
+    const t = type[i];
+    switch (t) {
+      case T.WATER: return SPR.water[(Math.floor(time * 2.2) + i % W + ((i / W) | 0)) % 3];
+      case T.ROAD: return SPR.road[roadMask(i)];
+      case T.RES: return lvl[i] ? SPR.lot : SPR.zoneRes;
+      case T.COM: return lvl[i] ? SPR.lot : SPR.zoneCom;
+      case T.IND: return lvl[i] ? SPR.lotInd : SPR.zoneInd;
+      case T.PARK: return SPR.parkGround;
+      case T.POWER: return SPR.lotInd;
+      case T.POLICE: case T.FIRE: case T.SCHOOL: return SPR.lot;
+      default: return SPR.grass[variety[i] & 1];
+    }
+  }
+
+  function objectSprite(i) {
+    const t = type[i], l = lvl[i];
+    switch (t) {
+      case T.TREE: return SPR.trees;
+      case T.RES: return l ? SPR['res' + l] : null;
+      case T.COM: return l ? SPR['com' + l] : null;
+      case T.IND: return l ? SPR['ind' + l] : null;
+      case T.POWER: return SPR.coal;
+      case T.WIND: return SPR.wind[S.speed ? Math.floor(time * (3 + S.speed * 2) + variety[i]) % 3 : 0];
+      case T.POLICE: return SPR.police;
+      case T.FIRE: return SPR.fire;
+      case T.SCHOOL: return SPR.school;
+      case T.PARK: return SPR.park;
+      case T.LINE: return SPR.pole;
+    }
+    return null;
+  }
+
+  function drawGround(i, cx, cy) { sprite(groundSprite(i), cx, cy); }
 
   function drawObject(i, cx, cy) {
-    const t = type[i], l = lvl[i], v = variety[i];
-    switch (t) {
-      case T.TREE:
-        tree(cx, cy, -0.18, -0.1, 0.9); tree(cx, cy, 0.2, 0.05, 0.75 + (v & 3) * 0.08);
-        if (v & 1) tree(cx, cy, -0.05, 0.25, 0.7);
-        break;
-      case T.PARK:
-        tree(cx, cy, -0.3, -0.25, 0.6); tree(cx, cy, 0.3, 0.25, 0.55);
-        break;
-      case T.RES:
-        if (l === 1) {
-          const walls = ['#f1e4c8', '#e8d3b0', '#f5f0e6', '#dcc7a1'][v & 3];
-          const roofs = ['#b9472f', '#7a4b2a', '#4a5f7a', '#9c3d54'][(v >> 2) & 3];
-          pitchedHouse(cx, cy, 0.42, 9, walls, roofs, -0.18, -0.12);
-          pitchedHouse(cx, cy, 0.36, 8, walls, roofs, 0.24, 0.2);
-        } else if (l === 2) {
-          box(cx, cy, 0.72, 26 + (v & 7), ['#d9c3a0', '#c9b79c', '#e2d6c3'][v % 3], 0, 0, null, 'rgba(255,240,200,0.45)');
-        } else if (l === 3) {
-          box(cx, cy, 0.7, 58 + (v & 31), ['#b9a58c', '#a8b0b8', '#c4b6a6'][v % 3], 0, 0, null, 'rgba(255,240,200,0.5)');
+    const sp = objectSprite(i);
+    if (sp) sprite(sp, cx, cy);
+    if (type[i] === T.LINE) {
+      // wires to neighbouring poles / powered tiles
+      const x = i % W, y = (i / W) | 0, wy = 48;
+      ctx.strokeStyle = 'rgba(25,22,30,0.85)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      [[1, 0], [0, 1]].forEach(([dx, dy]) => {
+        const nx = x + dx, ny = y + dy;
+        if (inb(nx, ny) && conducts(type[idx(nx, ny)])) {
+          const tx = cx + (dx - dy) * TW / 2, ty = cy + (dx + dy) * TH / 2;
+          const endY = type[idx(nx, ny)] === T.LINE ? ty - wy : ty - 4;
+          ctx.moveTo(cx, cy - wy); ctx.quadraticCurveTo((cx + tx) / 2, (cy - wy + endY) / 2 + 8, tx, endY);
         }
-        break;
-      case T.COM:
-        if (l === 1) {
-          box(cx, cy, 0.7, 12, ['#7fa7d9', '#89c0d6', '#a3b5e0'][v % 3], 0, 0, '#dfe6ee', 'rgba(255,255,255,0.5)');
-        } else if (l === 2) {
-          box(cx, cy, 0.78, 36 + (v & 7), ['#5f8fcf', '#6b9fb8', '#7c8fc9'][v % 3], 0, 0, null, 'rgba(210,235,255,0.55)');
-        } else if (l === 3) {
-          box(cx, cy, 0.78, 50, '#4f7fbf', 0, 0, null, 'rgba(210,235,255,0.6)');
-          box(cx, cy - 50, 0.55, 40 + (v & 31), '#3f6fb0', 0, 0, null, 'rgba(210,235,255,0.6)');
-        }
-        break;
-      case T.IND:
-        if (l >= 1) {
-          const c = ['#b59a5a', '#a08a6a', '#9c8f7a'][v % 3];
-          box(cx, cy, 0.8, 10 + l * 6, c, 0.02, 0.02, shade(c, 0.9));
-          if (l >= 2) { box(cx, cy - (10 + l * 6), 0.14, 14 + l * 4, '#8a7a6a', -0.15, 0.15); smoke(cx, cy - (24 + l * 10), v); }
-          if (l >= 3) { box(cx, cy - 28, 0.14, 22, '#8a7a6a', 0.18, -0.18); smoke(cx + 10, cy - 52, v + 40); }
-        }
-        break;
-      case T.POWER:
-        box(cx, cy, 0.85, 20, '#8c8c8c', 0, 0, '#9a9a9a');
-        box(cx, cy - 20, 0.16, 30, '#b04a3a', -0.22, 0.1);
-        box(cx, cy - 20, 0.16, 30, '#b04a3a', 0.1, -0.22);
-        smoke(cx - 9, cy - 56, v); smoke(cx + 9, cy - 56, v + 60);
-        break;
-      case T.WIND: {
-        ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 46); ctx.stroke();
-        const a = time * (S.speed ? 2 + S.speed : 0.3) + v;
-        ctx.lineWidth = 2; ctx.beginPath();
-        for (let k = 0; k < 3; k++) {
-          const ang = a + k * Math.PI * 2 / 3;
-          ctx.moveTo(cx, cy - 46); ctx.lineTo(cx + Math.cos(ang) * 18, cy - 46 + Math.sin(ang) * 18);
-        }
-        ctx.stroke();
-        break;
-      }
-      case T.POLICE:
-        box(cx, cy, 0.75, 18, '#3b5b9a', 0, 0, '#cfd8e6', 'rgba(255,255,255,0.5)');
-        ctx.fillStyle = (time * 2 | 0) % 2 ? '#ef4444' : '#3b82f6'; ctx.fillRect(cx - 2, cy - 26, 4, 4);
-        break;
-      case T.FIRE:
-        box(cx, cy, 0.75, 18, '#b83a2e', 0, 0, '#e7d2cc', 'rgba(255,255,255,0.5)');
-        box(cx, cy - 18, 0.18, 12, '#8f2a20', 0.2, -0.2);
-        break;
-      case T.SCHOOL:
-        box(cx, cy, 0.8, 16, '#c9844f', 0, 0, '#e8d6c2', 'rgba(255,255,255,0.5)');
-        ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(cx, cy - 16); ctx.lineTo(cx, cy - 34); ctx.stroke();
-        ctx.fillStyle = '#ef4444'; ctx.fillRect(cx, cy - 34, 8, 5);
-        break;
-      case T.LINE: {
-        ctx.strokeStyle = '#5b4636'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 22); ctx.moveTo(cx - 6, cy - 20); ctx.lineTo(cx + 6, cy - 20); ctx.stroke();
-        const x = i % W, y = (i / W) | 0;
-        ctx.strokeStyle = 'rgba(30,30,30,0.8)'; ctx.lineWidth = 1;
-        ctx.beginPath();
-        [[1, 0], [0, 1]].forEach(([dx, dy]) => {
-          const nx = x + dx, ny = y + dy;
-          if (inb(nx, ny) && conducts(type[idx(nx, ny)])) {
-            const tx = cx + (dx - dy) * TW / 2, ty = cy + (dx + dy) * TH / 2;
-            ctx.moveTo(cx, cy - 20); ctx.quadraticCurveTo((cx + tx) / 2, (cy + ty) / 2 - 16, tx, ty - 20);
-          }
-        });
-        ctx.stroke();
-        break;
-      }
+      });
+      ctx.stroke();
     }
     if (fire[i]) {
-      const f = Math.sin(time * 20 + i) * 3;
-      ctx.fillStyle = 'rgba(255,120,20,0.9)';
-      ctx.beginPath(); ctx.moveTo(cx - 12, cy); ctx.lineTo(cx, cy - 34 - f); ctx.lineTo(cx + 12, cy); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = 'rgba(255,220,60,0.9)';
-      ctx.beginPath(); ctx.moveTo(cx - 6, cy); ctx.lineTo(cx, cy - 20 + f); ctx.lineTo(cx + 6, cy); ctx.closePath(); ctx.fill();
+      const top = cy + TH / 2 - (sp ? sp.h * SPX : 24);
+      const f = (Math.floor(time * 12 + i) % 3) * 3;
+      ctx.fillStyle = '#ff7a1a';
+      ctx.fillRect(cx - 12, top + 10 - f, 8, cy - top - 2 + f);
+      ctx.fillRect(cx + 2, top + 4 + f, 10, cy - top + 2 - f);
+      ctx.fillStyle = '#ffd84a';
+      ctx.fillRect(cx - 8, top + 18, 4, cy - top - 14);
+      ctx.fillRect(cx + 4, top + 14 - f, 4, cy - top - 10 + f);
     }
   }
 
-  function smoke(cx, cy, v) {
-    if (!S.speed) return;
-    for (let k = 0; k < 3; k++) {
-      const p = ((time * 0.6 + k / 3 + v / 97) % 1);
-      ctx.fillStyle = `rgba(200,200,200,${0.45 * (1 - p)})`;
-      ctx.beginPath(); ctx.arc(cx + p * 10, cy - p * 26, 3 + p * 6, 0, Math.PI * 2); ctx.fill();
-    }
+  function objectTop(i, cy) {
+    const sp = objectSprite(i);
+    return sp ? cy + TH / 2 - sp.h * SPX : cy;
   }
 
   function overlayValue(i) {
@@ -723,6 +598,14 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0f1720'; ctx.fillRect(0, 0, vw, vh);
     ctx.setTransform(dpr * cam.z, 0, 0, dpr * cam.z, dpr * cam.x, dpr * cam.y);
+    ctx.imageSmoothingEnabled = false;
+
+    // Grass-coloured underlay hides hairline seams between tiles at fractional zoom.
+    {
+      const a = corner(0, 0), b = corner(W, 0), c = corner(W, H), d = corner(0, H);
+      ctx.fillStyle = '#5c9d42';
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.closePath(); ctx.fill();
+    }
 
     // visible bounds in world px
     const left = -cam.x / cam.z - TW, right = (vw - cam.x) / cam.z + TW;
@@ -793,8 +676,9 @@
       const i = y * W + x, t = type[i];
       if (t !== T.GRASS && t !== T.WATER && t !== T.ROAD) drawObject(i, cx, cy);
       if (showIcons && isZone(t)) {
-        if (roadDist[i] > 3) badge(cx, cy - 8 - lvl[i] * 12, '#f97316', '⛔');
-        else if (!pow[i] && (time * 1.5 | 0) % 2) badge(cx, cy - 8 - lvl[i] * 12, '#facc15', '⚡');
+        const by = lvl[i] ? objectTop(i, cy) - 6 : cy - 8;
+        if (roadDist[i] > 3) badge(cx, by, '#f97316', '⛔');
+        else if (!pow[i] && (time * 1.5 | 0) % 2) badge(cx, by, '#facc15', '⚡');
       }
     }
 
@@ -1210,7 +1094,7 @@
     d.className = 'toast ' + kind; d.textContent = msg;
     if (where) { d.style.pointerEvents = 'auto'; d.style.cursor = 'pointer'; d.onclick = () => centerCamera(where.x, where.y); }
     const box = $('toasts'); box.appendChild(d);
-    while (box.children.length > 4) box.firstChild.remove();
+    while (box.children.length > (window.matchMedia('(max-width: 720px)').matches ? 2 : 4)) box.firstChild.remove();
     setTimeout(() => d.remove(), 4500);
   }
 

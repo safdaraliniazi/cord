@@ -2,7 +2,7 @@
 
 An isometric city-building sim for the browser where **you build by coordinates**. There's no dragging: every road, zone and building is placed by typing its X/Y position on a graph-paper map, either in a simple From/To form or as text commands.
 
-Plain HTML5 Canvas and JavaScript, with no dependencies and no build step.
+Pixel-art graphics drawn in code (`js/sprites.js`, preview in `sprites.html`). Plain HTML5 Canvas and JavaScript, with no dependencies and no build step.
 
 ## Building by coordinates
 

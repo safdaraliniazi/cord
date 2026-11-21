@@ -189,5 +189,5 @@ input[type=range] { accent-color: var(--accent); }
   #console input[type=number] { width: 42px; }
   #btnBuild, #cmdForm button { padding: 7px 10px; }
   #cHint { font-size: 11px; }
-  .toast { text-align: center; }
+  .toast { text-align: center; font-size: 12px; padding: 6px 10px; }
 }

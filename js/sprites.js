@@ -142,7 +142,7 @@
   function grassPainter(seed) {
     return (x, y) => {
       const h = hash(x, y, seed) % 100;
-      if (h < 2) return h ? '#f0e48a' : '#f4f4f4';
+      if (h === 0 && hash(x, y, seed + 9) % 3 === 0) return '#e9d96f';
       if (h < 14) return GRASS[2];
       if (h < 26) return GRASS[1];
       if (h < 30) return GRASS[3];
