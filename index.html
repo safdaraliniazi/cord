@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Cord City</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <header id="topbar">
+    <div class="brand"><span class="logo">▦</span> <span id="cityName">Cord City</span></div>
+    <div class="stat"><label>Funds</label><span id="funds">$0</span></div>
+    <div class="stat"><label>Population</label><span id="pop">0</span></div>
+    <div class="stat"><label>Date</label><span id="date">Jan 2000</span></div>
+    <div class="stat"><label>Power</label><span id="power">0 / 0</span></div>
+    <div class="speed" id="speed">
+      <button data-speed="0" title="Pause (Space)">❚❚</button>
+      <button data-speed="1" title="Normal">▶</button>
+      <button data-speed="2" title="Fast">▶▶</button>
+      <button data-speed="3" title="Ultra">▶▶▶</button>
+    </div>
+    <div class="menu">
+      <button id="btnBudget" title="Budget">💰</button>
+      <button id="btnSave" title="Save">💾</button>
+      <button id="btnLoad" title="Load">📂</button>
+      <button id="btnNew" title="New city">✚</button>
+      <button id="btnHelp" title="Help">?</button>
+    </div>
+  </header>
+
+  <nav id="toolbar"></nav>
+
+  <aside id="side">
+    <div class="panel">
+      <h3>Demand</h3>
+      <div class="rci">
+        <div class="bar"><div class="fill" id="dR"></div><span>R</span></div>
+        <div class="bar"><div class="fill" id="dC"></div><span>C</span></div>
+        <div class="bar"><div class="fill" id="dI"></div><span>I</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Overlay</h3>
+      <select id="overlay">
+        <option value="none">None</option>
+        <option value="power">Power grid</option>
+        <option value="land">Land value</option>
+        <option value="pollution">Pollution</option>
+        <option value="crime">Crime</option>
+        <option value="fire">Fire coverage</option>
+        <option value="edu">Education</option>
+      </select>
+    </div>
+    <div class="panel">
+      <h3>Tax rate <span id="taxVal">9%</span></h3>
+      <input type="range" id="tax" min="0" max="20" value="9">
+    </div>
+    <div class="panel">
+      <h3>Map</h3>
+      <canvas id="minimap" width="192" height="96"></canvas>
+    </div>
+    <div class="panel" id="inspect" hidden></div>
+  </aside>
+
+  <div id="tooltip" hidden></div>
+  <div id="toasts"></div>
+
+  <div class="modal" id="budgetModal" hidden>
+    <div class="card">
+      <h2>City Budget</h2>
+      <div id="budgetBody"></div>
+      <button class="close">Close</button>
+    </div>
+  </div>
+
+  <div class="modal" id="helpModal" hidden>
+    <div class="card">
+      <h2>How to build your city</h2>
+      <ol>
+        <li><b>Build a power source</b>: a coal plant or wind turbines.</li>
+        <li><b>Lay roads.</b> Drag to draw them. Roads also carry power.</li>
+        <li><b>Zone land</b> near roads: <span class="r">Residential</span>, <span class="c">Commercial</span>, <span class="i">Industrial</span>. Drag to paint an area.</li>
+        <li>Zones grow when they have <b>power</b>, a <b>road within 3 tiles</b>, and <b>demand</b> (see the R/C/I bars).</li>
+        <li>Add <b>parks, schools, police and fire stations</b> to raise land value, which lets buildings grow taller.</li>
+        <li>Keep housing away from factory pollution. Watch your budget and taxes.</li>
+      </ol>
+      <p class="keys"><b>Controls:</b> left-drag builds · right/middle-drag or WASD pans · scroll or pinch zooms · Space pauses · Esc cancels · 1–9 select tools</p>
+      <button class="close">Let's build</button>
+    </div>
+  </div>
+
+  <script src="js/game.js"></script>
+</body>
+</html>
