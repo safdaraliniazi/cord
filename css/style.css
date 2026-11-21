@@ -17,7 +17,7 @@ html, body {
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   user-select: none; -webkit-user-select: none;
 }
-#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 button { font: inherit; color: inherit; cursor: pointer; }
 
 #topbar {
@@ -94,11 +94,11 @@ input[type=range] { accent-color: var(--accent); }
 }
 #tooltip.bad { color: #f87171; }
 
-#toasts { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 30; pointer-events: none; }
+#toasts { position: fixed; top: calc(var(--topH, 48px) + 12px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 30; pointer-events: none; }
 .toast { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 8px 14px; border-radius: 8px; animation: tin .25s ease-out; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
 .toast.warn { border-left-color: #fbbf24; }
 .toast.bad { border-left-color: #f87171; }
-@keyframes tin { from { opacity: 0; transform: translateY(8px); } }
+@keyframes tin { from { opacity: 0; transform: translateY(-8px); } }
 
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 40; padding: 16px; }
 .modal[hidden] { display: none; }
@@ -113,6 +113,42 @@ input[type=range] { accent-color: var(--accent); }
 .budget tr.total td { border-top: 1px solid var(--line); font-weight: 700; }
 
 #btnPanel { display: none; }
+
+/* Coordinate build console */
+#console {
+  position: fixed; left: 86px; right: 238px; bottom: 12px; margin: 0 auto; max-width: 640px; z-index: 10;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 7px; backdrop-filter: blur(6px);
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+}
+.crow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ctool { font-weight: 700; min-width: 96px; color: var(--accent); }
+.coord { display: flex; align-items: center; gap: 4px; }
+.coord[hidden] { display: none; }
+.coord label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-right: 2px; min-width: 30px; }
+#console input {
+  background: #0b1118; color: var(--text); border: 1px solid rgba(255,255,255,0.14); border-radius: 6px;
+  padding: 6px; font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#console input[type=number] { width: 52px; text-align: center; -moz-appearance: textfield; appearance: textfield; }
+#console input[type=number]::-webkit-inner-spin-button, #console input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#x1, #x2 { color: #ffd166; } #y1, #y2 { color: #7dd3fc; }
+#console input::placeholder { color: var(--muted); font-weight: 400; }
+#console input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#btnBuild, #cmdForm button { background: var(--accent); color: #062014; border: 0; border-radius: 6px; padding: 7px 16px; font-weight: 700; }
+#btnBuild { margin-left: auto; }
+#cmdForm button { background: rgba(255,255,255,0.1); color: var(--text); }
+#cmdForm .prompt { color: var(--accent); font: 700 14px ui-monospace, Menlo, monospace; }
+#cmd { flex: 1; min-width: 0; }
+#cHint { font-size: 12px; color: var(--muted); min-height: 1.2em; }
+#cHint.ok { color: var(--text); }
+#cHint.bad { color: #f87171; }
+#cHint.warn { color: #fbbf24; }
+.xc { color: #ffd166; font-weight: 600; } .yc { color: #7dd3fc; font-weight: 600; }
+.card code, .card pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0b1118; border-radius: 4px; }
+.card code { padding: 1px 5px; }
+.card pre.cmds { padding: 10px 12px; color: #c7f0da; line-height: 1.6; overflow-x: auto; }
+
 
 @media (max-width: 720px) {
   #topbar { flex-wrap: wrap; gap: 6px 12px; padding-bottom: 6px; padding-top: calc(env(safe-area-inset-top, 0px) + 6px); overflow: visible; }
@@ -137,9 +173,21 @@ input[type=range] { accent-color: var(--accent); }
 
   #side {
     display: none; top: calc(var(--topH, 90px) + 8px); bottom: auto; right: max(8px, env(safe-area-inset-right, 0px));
-    width: 190px; max-height: calc(100% - var(--topH, 90px) - 90px);
+    width: 190px; max-height: calc(100% - var(--topH, 90px) - 200px);
   }
   #side.open { display: flex; }
-  #toasts { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); width: calc(100% - 32px); }
+  #toasts { width: calc(100% - 32px); }
+  #console {
+    left: 0; right: 0; bottom: calc(61px + env(safe-area-inset-bottom, 0px)); max-width: none;
+    border-radius: 0; border-width: 1px 0 0; box-shadow: none; gap: 5px;
+    padding: 6px max(8px, env(safe-area-inset-right, 0px)) 6px max(8px, env(safe-area-inset-left, 0px));
+  }
+  .crow { gap: 5px; flex-wrap: nowrap; }
+  .ctool { display: none; }
+  .coord label { min-width: 0; font-size: 9px; }
+  #console input { font-size: 16px; padding: 5px 3px; }
+  #console input[type=number] { width: 42px; }
+  #btnBuild, #cmdForm button { padding: 7px 10px; }
+  #cHint { font-size: 11px; }
   .toast { text-align: center; }
 }

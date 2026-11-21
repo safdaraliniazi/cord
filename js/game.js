@@ -32,19 +32,19 @@
     { id: 'bulldoze', label: 'Bulldoze', icon: '🚜', mode: 'rect', cost: 2 },
     { sep: true },
     { id: 'road', label: 'Road', icon: '🛣️', mode: 'line', cost: 10, type: T.ROAD },
-    { id: 'line', label: 'Power line', icon: '🔌', mode: 'line', cost: 4, type: T.LINE },
+    { id: 'line', label: 'Power line', full: 'Power line', icon: '🔌', mode: 'line', cost: 4, type: T.LINE },
     { sep: true },
-    { id: 'res', label: 'Resid.', swatch: '#4caf50', mode: 'rect', cost: 10, type: T.RES },
-    { id: 'com', label: 'Comm.', swatch: '#3b82f6', mode: 'rect', cost: 10, type: T.COM },
-    { id: 'ind', label: 'Indust.', swatch: '#eab308', mode: 'rect', cost: 10, type: T.IND },
+    { id: 'res', label: 'Resid.', full: 'Residential', swatch: '#4caf50', mode: 'rect', cost: 10, type: T.RES },
+    { id: 'com', label: 'Comm.', full: 'Commercial', swatch: '#3b82f6', mode: 'rect', cost: 10, type: T.COM },
+    { id: 'ind', label: 'Indust.', full: 'Industrial', swatch: '#eab308', mode: 'rect', cost: 10, type: T.IND },
     { sep: true },
-    { id: 'power', label: 'Coal', icon: '🏭', mode: 'single', cost: 3000, type: T.POWER },
-    { id: 'wind', label: 'Wind', icon: '🌬️', mode: 'single', cost: 500, type: T.WIND },
-    { id: 'police', label: 'Police', icon: '🚓', mode: 'single', cost: 500, type: T.POLICE },
-    { id: 'fire', label: 'Fire', icon: '🚒', mode: 'single', cost: 500, type: T.FIRE },
+    { id: 'power', label: 'Coal', full: 'Coal plant', icon: '🏭', mode: 'single', cost: 3000, type: T.POWER },
+    { id: 'wind', label: 'Wind', full: 'Wind turbine', icon: '🌬️', mode: 'single', cost: 500, type: T.WIND },
+    { id: 'police', label: 'Police', full: 'Police station', icon: '🚓', mode: 'single', cost: 500, type: T.POLICE },
+    { id: 'fire', label: 'Fire', full: 'Fire station', icon: '🚒', mode: 'single', cost: 500, type: T.FIRE },
     { id: 'school', label: 'School', icon: '🏫', mode: 'single', cost: 800, type: T.SCHOOL },
     { id: 'park', label: 'Park', icon: '⛲', mode: 'rect', cost: 40, type: T.PARK },
-    { id: 'tree', label: 'Trees', icon: '🌳', mode: 'rect', cost: 5, type: T.TREE },
+    { id: 'tree', label: 'Trees', full: 'Trees', icon: '🌳', mode: 'rect', cost: 5, type: T.TREE },
   ];
   const toolById = Object.fromEntries(TOOLS.filter(t => !t.sep).map(t => [t.id, t]));
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -343,19 +343,19 @@
   }
 
   function applyTool(tool, tiles) {
-    if (tool.id === 'inspect') { showInspect(tiles[0]); return; }
-    let spent = 0, placed = 0, broke = false;
+    if (tool.id === 'inspect') { showInspect(tiles[0]); return { inspect: true }; }
+    let spent = 0, placed = 0, broke = false, blocked = 0, need = 0;
     for (const i of tiles) {
-      if (!canPlaceAt(tool, i)) continue;
+      if (!canPlaceAt(tool, i)) { blocked++; continue; }
       const c = costAt(tool, i);
-      if (S.funds - spent < c) { broke = true; break; }
+      if (S.funds - spent < c) { broke = true; need = c; break; }
       spent += c; placed++;
       if (tool.id === 'bulldoze') { type[i] = T.GRASS; lvl[i] = 0; fire[i] = 0; }
       else { type[i] = tool.type; lvl[i] = 0; fire[i] = 0; variety[i] = (Math.random() * 256) | 0; }
     }
     S.funds -= spent;
-    if (broke) toast('Not enough funds!', 'bad');
     if (placed) { mapsDirty = true; computeMaps(); computeStats(); updateHUD(); drawMinimap(); }
+    return { placed, spent, broke, blocked, need };
   }
 
   // ---------- Cars ----------
@@ -400,7 +400,7 @@
   let dpr = 1, vw = 0, vh = 0;
   let overlay = 'none';
   let hoverTile = -1;
-  let drag = null;   // {tool, start, end}
+  let pending = null; // previewed build order {tool, tiles}
   let currentTool = toolById.inspect;
   let selected = -1;
   let time = 0;
@@ -668,9 +668,55 @@
     return null;
   }
 
-  function previewTiles() {
-    if (!drag) return hoverTile >= 0 && currentTool.id !== 'inspect' ? [hoverTile] : [];
-    return dragTiles(drag.tool, drag.start, drag.end);
+  function previewTiles() { return pending && pending.tiles ? pending.tiles : []; }
+  const corner = (x, y) => [(x - y) * TW / 2, (x + y) * TH / 2];
+  const center = (x, y) => [(x - y) * TW / 2, (x + y) * TH / 2 + TH / 2];
+
+  // Graph-paper grid; every 10th line is brighter so coordinates are easy to count.
+  function drawGrid() {
+    ctx.lineWidth = 1 / cam.z;
+    for (const major of [false, true]) {
+      ctx.strokeStyle = major ? 'rgba(255,255,255,0.32)' : 'rgba(0,0,0,0.12)';
+      ctx.beginPath();
+      for (let k = 0; k <= W; k++) {
+        if ((k % 10 === 0) !== major) continue;
+        let a = corner(k, 0), b = corner(k, H); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+        a = corner(0, k); b = corner(W, k); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+      }
+      ctx.stroke();
+    }
+  }
+
+  function label(text, x, y, color, size) {
+    ctx.font = `700 ${size / cam.z}px ui-monospace, Menlo, monospace`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3 / cam.z; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.strokeText(text, x, y);
+    ctx.fillStyle = color; ctx.fillText(text, x, y);
+  }
+  const X_COL = '#ffd166', Y_COL = '#7dd3fc';
+  // Reference markers where major grid lines cross, so a coordinate is always in view.
+  function drawMarkers(visible) {
+    const every = cam.z >= 1.1 ? 5 : 10;
+    for (let y = 0; y < H; y += every) for (let x = 0; x < W; x += every) {
+      const [cx, cy] = center(x, y);
+      if (!visible(cx, cy)) continue;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath(); ctx.arc(cx, cy, 2 / cam.z, 0, Math.PI * 2); ctx.fill();
+      label(`${x},${y}`, cx, cy - 9 / cam.z, 'rgba(255,255,255,0.92)', 10);
+    }
+  }
+  function drawAxes() {
+    const step = cam.z >= 0.9 ? 1 : cam.z >= 0.5 ? 2 : 5;
+    for (let k = 0; k < W; k++) {
+      if (k % step && k % 10) continue;
+      const big = k % 10 === 0 ? 13 : 11;
+      let c = center(k, -1); label(String(k), c[0], c[1], X_COL, big);
+      c = center(k, H); label(String(k), c[0], c[1], X_COL, big);
+      c = center(-1, k); label(String(k), c[0], c[1], Y_COL, big);
+      c = center(W, k); label(String(k), c[0], c[1], Y_COL, big);
+    }
+    let c = center(W / 2, -3); label('X →', c[0], c[1], X_COL, 15);
+    c = center(-3, H / 2); label('← Y', c[0], c[1], Y_COL, 15);
   }
 
   function render() {
@@ -702,6 +748,8 @@
       }
     }
 
+    drawGrid();
+
     // Cars (drawn on the ground, before buildings)
     for (const c of cars) {
       const ax = c.a % W, ay = (c.a / W) | 0, bx = c.b % W, by = (c.b / W) | 0;
@@ -721,8 +769,8 @@
     if (prev.length) {
       for (const i of prev) {
         const x = i % W, y = (i / W) | 0, cx = (x - y) * TW / 2, cy = (x + y) * TH / 2 + TH / 2;
-        const ok = canPlaceAt(currentTool, i);
-        ctx.fillStyle = ok ? (currentTool.id === 'bulldoze' ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.35)') : 'rgba(239,68,68,0.25)';
+        const ok = canPlaceAt(pending.tool, i);
+        ctx.fillStyle = ok ? (pending.tool.id === 'bulldoze' ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.35)') : 'rgba(239,68,68,0.25)';
         diamond(cx, cy, 1); ctx.fill();
       }
     }
@@ -749,6 +797,25 @@
         else if (!pow[i] && (time * 1.5 | 0) % 2) badge(cx, cy - 8 - lvl[i] * 12, '#facc15', '⚡');
       }
     }
+
+    if (overlay !== 'coords') drawMarkers(visible);
+    // Tile numbers overlay
+    if (overlay === 'coords') {
+      const every = cam.z >= 0.9 ? 1 : cam.z >= 0.55 ? 2 : 5;
+      for (let y = 0; y < H; y += every) for (let x = 0; x < W; x += every) {
+        const [cx, cy] = center(x, y);
+        if (visible(cx, cy)) label(`${x},${y}`, cx, cy, '#fff', 9);
+      }
+    }
+    // Label both ends of the previewed order
+    if (pending && pending.tiles && pending.tiles.length) {
+      const ends = [pending.tiles[0], pending.tiles[pending.tiles.length - 1]];
+      for (const i of new Set(ends)) {
+        const x = i % W, y = (i / W) | 0, [cx, cy] = center(x, y);
+        label(`(${x}, ${y})`, cx, cy - 22, '#fff', 12);
+      }
+    }
+    drawAxes();
   }
 
   function badge(cx, cy, color, glyph) {
@@ -815,22 +882,20 @@
   let pan = null, pinch = null;
   const tooltip = document.getElementById('tooltip');
 
+  // The map is only for looking: drag pans, pinch/scroll zooms, tap inspects.
+  // Building happens through coordinates in the build console.
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) {
-      drag = null; pan = null;
+      pan = null;
       const [p1, p2] = [...pointers.values()];
       pinch = { d: Math.hypot(p1.x - p2.x, p1.y - p2.y), mx: (p1.x + p2.x) / 2, my: (p1.y + p2.y) / 2 };
       return;
     }
-    if (e.button === 1 || e.button === 2 || (currentTool.id === 'inspect' && e.button === 0)) {
-      pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false, click: e.button === 0 };
-      return;
-    }
-    const i = screenToTile(e.clientX, e.clientY);
-    if (i >= 0 && e.button === 0) drag = { tool: currentTool, start: i, end: i };
+    pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false, click: e.button === 0 };
+    canvas.style.cursor = 'grabbing';
   });
   canvas.addEventListener('pointermove', e => {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -844,23 +909,23 @@
     }
     if (pan) {
       const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
-      if (Math.abs(dx) + Math.abs(dy) > 4) pan.moved = true;
-      cam.x = pan.cx + dx; cam.y = pan.cy + dy;
+      if (Math.abs(dx) + Math.abs(dy) > 6) pan.moved = true;
+      if (pan.moved) { cam.x = pan.cx + dx; cam.y = pan.cy + dy; }
     }
     hoverTile = screenToTile(e.clientX, e.clientY);
-    if (drag && hoverTile >= 0) drag.end = hoverTile;
-    updateTooltip(e.clientX, e.clientY);
+    updateTooltip(e.clientX, e.clientY, e.pointerType);
   });
   const endPointer = e => {
     pointers.delete(e.pointerId);
+    canvas.style.cursor = 'grab';
     if (pinch) { if (pointers.size < 2) pinch = null; return; }
     if (pan) {
-      if (pan.click && !pan.moved) { const i = screenToTile(e.clientX, e.clientY); if (i >= 0) showInspect(i); }
+      if (pan.click && !pan.moved && e.type === 'pointerup') {
+        const i = screenToTile(e.clientX, e.clientY);
+        if (i >= 0) showInspect(i);
+      }
       pan = null;
     }
-    if (drag && e.type === 'pointerup') { applyTool(drag.tool, dragTiles(drag.tool, drag.start, drag.end)); }
-    drag = null;
-    updateTooltip(e.clientX, e.clientY);
   };
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
@@ -875,24 +940,23 @@
     zoomAt(e.clientX, e.clientY, cam.z * Math.exp(-e.deltaY * 0.0015));
   }, { passive: false });
 
-  function updateTooltip(sx, sy) {
-    const tool = currentTool;
-    if (tool.id === 'inspect' || hoverTile < 0) { tooltip.hidden = true; return; }
-    const tiles = drag ? dragTiles(tool, drag.start, drag.end) : [hoverTile];
-    let cost = 0, n = 0;
-    for (const i of tiles) if (canPlaceAt(tool, i)) { cost += costAt(tool, i); n++; }
-    tooltip.hidden = false;
-    tooltip.textContent = n ? `${tool.label} · $${cost.toLocaleString()}` : `Can't place here`;
-    tooltip.className = (!n || cost > S.funds) ? 'bad' : '';
+  function updateTooltip(sx, sy, ptype) {
+    if (hoverTile < 0 || ptype !== 'mouse') { tooltip.hidden = true; return; }
+    tooltip.hidden = false; tooltip.className = '';
+    tooltip.textContent = `X ${hoverTile % W}  Y ${(hoverTile / W) | 0}`;
     tooltip.style.left = sx + 16 + 'px'; tooltip.style.top = sy + 16 + 'px';
   }
 
   const keys = new Set();
   window.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
     keys.add(e.key.toLowerCase());
     if (e.key === ' ') { e.preventDefault(); setSpeed(S.speed ? 0 : 1); }
-    if (e.key === 'Escape') { drag = null; selectTool('inspect'); }
+    if (e.key === 'Escape') clearConsole();
+    if (e.key === '/' || e.key === 'Enter') { e.preventDefault(); $('cmd').focus(); }
     if (e.key === '+' || e.key === '=') zoomAt(vw / 2, vh / 2, cam.z * 1.2);
     if (e.key === '-') zoomAt(vw / 2, vh / 2, cam.z / 1.2);
     const n = parseInt(e.key, 10);
@@ -915,8 +979,171 @@
   function selectTool(id) {
     currentTool = toolById[id];
     toolbar.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tool === id));
-    canvas.style.cursor = id === 'inspect' ? 'grab' : 'crosshair';
+    canvas.style.cursor = 'grab';
+    $('cTool').textContent = currentTool.full || currentTool.label;
+    $('toGroup').hidden = currentTool.mode === 'single';
+    $('fromLabel').textContent = currentTool.mode === 'single' ? 'At' : 'From';
+    $('btnBuild').textContent = id === 'inspect' ? 'Inspect' : id === 'bulldoze' ? 'Bulldoze' : 'Build';
+    refreshPreview(formOrder());
   }
+
+  // ---------- Coordinate build console ----------
+  const ALIASES = {
+    road: 'road', roads: 'road', street: 'road', line: 'line', wire: 'line',
+    res: 'res', residential: 'res', house: 'res', homes: 'res', r: 'res',
+    com: 'com', commercial: 'com', shop: 'com', shops: 'com', c: 'com',
+    ind: 'ind', industrial: 'ind', factory: 'ind', i: 'ind',
+    coal: 'power', plant: 'power', power: 'power', wind: 'wind', turbine: 'wind',
+    police: 'police', fire: 'fire', firestation: 'fire', school: 'school', park: 'park', tree: 'tree', trees: 'tree',
+    bulldoze: 'bulldoze', demolish: 'bulldoze', destroy: 'bulldoze', bd: 'bulldoze', clear: 'bulldoze',
+    inspect: 'inspect', info: 'inspect',
+  };
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const usage = tool => tool.mode === 'single' ? `${tool.id} X Y` : `${tool.id} X1 Y1 to X2 Y2`;
+
+  function makeOrder(tool, nums) {
+    if (nums.length !== 2 && nums.length !== 4) return { tool, err: `Usage: ${usage(tool)}` };
+    if (tool.mode === 'single' && nums.length === 4) return { tool, err: `${tool.full || tool.label} goes on one tile. Usage: ${usage(tool)}` };
+    if (nums.some(n => !Number.isInteger(n) || n < 0 || n >= W)) return { tool, err: `Coordinates must be whole numbers from 0 to ${W - 1}` };
+    const a = idx(nums[0], nums[1]), b = nums.length === 4 ? idx(nums[2], nums[3]) : a;
+    return { tool, tiles: dragTiles(tool, a, b) };
+  }
+
+  function parseCommand(src) {
+    const s = src.trim().toLowerCase().replace(/power[\s-]*lines?/g, 'line').replace(/fire[\s-]*station/g, 'fire')
+      .replace(/police[\s-]*station/g, 'police').replace(/wind[\s-]*turbine/g, 'wind').replace(/coal[\s-]*plant/g, 'coal');
+    if (!s) return null;
+    const word = (s.match(/^[a-z]+/) || [''])[0];
+    const nums = (s.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+    if (word === 'help' || s === '?') return { help: true };
+    if (word === 'goto' || word === 'go' || word === 'view' || word === 'look') {
+      if (nums.length !== 2 || nums.some(n => n < 0 || n >= W)) return { err: `Usage: goto X Y (0 to ${W - 1})` };
+      return { goto: nums };
+    }
+    if (word === 'pause') return { speed: 0 };
+    if (word === 'play' || word === 'resume') return { speed: 1 };
+    const id = ALIASES[word];
+    if (!id) return { err: `Unknown command "${word || s}". Type help to see the commands.` };
+    return makeOrder(toolById[id], nums);
+  }
+
+  function focusTiles(tiles) {
+    let sx = 0, sy = 0;
+    for (const i of tiles) { sx += i % W; sy += (i / W) | 0; }
+    const x = sx / tiles.length, y = sy / tiles.length;
+    const [wx, wy] = center(x, y), px = wx * cam.z + cam.x, py = wy * cam.z + cam.y;
+    if (px < 80 || px > vw - 80 || py < 100 || py > vh - 200) centerCamera(x, y);
+  }
+
+  function say(msg, kind = '') {
+    const h = $('cHint'); h.textContent = msg; h.className = kind || 'ok';
+    toast(msg, kind);
+  }
+
+  function runOrder(o) {
+    if (!o) return false;
+    if (o.help) { $('helpModal').hidden = false; return true; }
+    if (o.err) { say(o.err, 'bad'); return false; }
+    if (o.speed !== undefined) { setSpeed(o.speed); return true; }
+    if (o.goto) { centerCamera(o.goto[0], o.goto[1]); say(`Moved the view to (${o.goto[0]}, ${o.goto[1]})`); return true; }
+    const tool = o.tool, name = (tool.full || tool.label).toLowerCase();
+    focusTiles(o.tiles);
+    const r = applyTool(tool, o.tiles);
+    if (r.inspect) return true;
+    if (r.placed) {
+      const what = tool.id === 'bulldoze' ? `Cleared ${plural(r.placed, 'tile')}` :
+        tool.mode === 'single' ? `Built a ${name}` : `Built ${plural(r.placed, name + ' tile')}`;
+      let msg = `${what} for ${fmtMoney(r.spent)}.`;
+      if (r.broke) msg += ' Ran out of funds before finishing.';
+      else if (r.blocked) msg += ` Skipped ${plural(r.blocked, 'blocked tile')}.`;
+      say(msg, r.broke ? 'warn' : '');
+      return true;
+    }
+    if (r.broke) say(`Not enough funds. This needs ${fmtMoney(r.need)} and you have ${fmtMoney(S.funds)}.`, 'bad');
+    else say(tool.id === 'bulldoze' ? 'Nothing to clear there.' : `Can't build a ${name} there. The tiles are water or already in use.`, 'bad');
+    return false;
+  }
+
+  const fields = ['x1', 'y1', 'x2', 'y2'].map(id => $(id));
+  function formOrder() {
+    const v = fields.map(f => f.value.trim());
+    if (!v[0] && !v[1]) return null;
+    if (!v[0] || !v[1]) return { tool: currentTool, err: 'Enter both X and Y' };
+    const nums = [Number(v[0]), Number(v[1])];
+    if (currentTool.mode !== 'single' && (v[2] || v[3])) {
+      if (!v[2] || !v[3]) return { tool: currentTool, err: 'Enter both X and Y for the end point' };
+      nums.push(Number(v[2]), Number(v[3]));
+    }
+    return makeOrder(currentTool, nums);
+  }
+
+  function defaultHint() {
+    return currentTool.mode === 'single'
+      ? 'Enter the X and Y of a tile. The yellow and blue numbers on the map edges are X and Y.'
+      : 'Enter From X,Y. Add To X,Y to cover a line or an area.';
+  }
+
+  function refreshPreview(o) {
+    pending = o && o.tiles ? o : null;
+    const h = $('cHint');
+    if (!o) { h.textContent = defaultHint(); h.className = ''; return; }
+    if (o.err) { h.textContent = o.err; h.className = 'bad'; return; }
+    if (o.help) { h.textContent = 'Press Enter to open the help'; h.className = ''; return; }
+    if (o.goto) { h.textContent = `Press Enter to move the view to (${o.goto[0]}, ${o.goto[1]})`; h.className = ''; return; }
+    if (o.speed !== undefined) { h.textContent = o.speed ? 'Press Enter to resume' : 'Press Enter to pause'; h.className = ''; return; }
+    const tool = o.tool;
+    if (tool.id === 'inspect') { const i = o.tiles[0]; h.textContent = `Inspect tile (${i % W}, ${(i / W) | 0})`; h.className = ''; return; }
+    let n = 0, cost = 0;
+    for (const i of o.tiles) if (canPlaceAt(tool, i)) { n++; cost += costAt(tool, i); }
+    if (!n) { h.textContent = tool.id === 'bulldoze' ? 'Nothing to clear in that area' : 'Those tiles are water or already in use'; h.className = 'bad'; return; }
+    h.textContent = `${tool.full || tool.label}: ${plural(n, 'tile')}, ${fmtMoney(cost)}` +
+      (n < o.tiles.length ? ` (${o.tiles.length - n} blocked)` : '') + (cost > S.funds ? '. Not enough funds.' : '');
+    h.className = cost > S.funds ? 'bad' : 'ok';
+  }
+
+  function clearConsole() {
+    fields.forEach(f => { f.value = ''; });
+    $('cmd').value = '';
+    refreshPreview(null);
+  }
+
+  function buildFromForm() {
+    const o = formOrder();
+    if (!o) { say('Enter coordinates first', 'warn'); fields[0].focus(); return; }
+    const ok = runOrder(o);
+    if (ok && o.tool && o.tool.id !== 'inspect') {
+      if (o.tool.mode === 'line' && fields[2].value) {
+        // Chain the next segment from where this one ended.
+        fields[0].value = fields[2].value; fields[1].value = fields[3].value;
+        fields[2].value = ''; fields[3].value = '';
+      } else fields.forEach(f => { f.value = ''; });
+    }
+    pending = null; // keep the result message until the next edit
+  }
+
+  fields.forEach((f, k) => {
+    f.addEventListener('input', () => { $('cmd').value = ''; refreshPreview(formOrder()); });
+    f.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); buildFromForm(); } });
+  });
+  $('btnBuild').addEventListener('click', buildFromForm);
+
+  const history = [];
+  let hIdx = 0;
+  const lastPart = v => { const parts = v.split(/[;\n]/); return parts[parts.length - 1]; };
+  $('cmd').addEventListener('input', () => refreshPreview(parseCommand(lastPart($('cmd').value))));
+  $('cmd').addEventListener('keydown', e => {
+    if (e.key === 'ArrowUp' && hIdx > 0) { e.preventDefault(); $('cmd').value = history[--hIdx]; refreshPreview(parseCommand(lastPart($('cmd').value))); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); hIdx = Math.min(history.length, hIdx + 1); $('cmd').value = history[hIdx] || ''; refreshPreview(parseCommand(lastPart($('cmd').value))); }
+  });
+  $('cmdForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const src = $('cmd').value;
+    if (!src.trim()) return;
+    history.push(src); hIdx = history.length;
+    for (const part of src.split(/[;\n]+/)) if (part.trim()) runOrder(parseCommand(part));
+    $('cmd').value = '';
+    pending = null;
+  });
 
   document.querySelectorAll('#speed button').forEach(b => b.addEventListener('click', () => setSpeed(+b.dataset.speed)));
   function setSpeed(s) {
@@ -1085,7 +1312,7 @@
   window.addEventListener('resize', () => { resize(); syncTopHeight(); drawMinimap(); });
   resize(); syncTopHeight();
   if (!load(true)) { newCity(); $('helpModal').hidden = false; }
-  selectTool('inspect');
+  selectTool('road');
   updateHUD();
   drawMinimap();
   setInterval(() => { if (S.speed) drawMinimap(); }, 1000);
@@ -1101,5 +1328,6 @@
 
   // Expose for debugging/tests
   window.cordCity = { T, get S() { return S; }, type, stats, demand, applyTool: (id, tiles) => applyTool(toolById[id], tiles), idx,
-    simDay, refs: () => ({ type, lvl, pow, roadDist }) };
+    simDay, refs: () => ({ type, lvl, pow, roadDist }),
+    run: src => src.split(/[;\n]+/).filter(p => p.trim()).map(p => runOrder(parseCommand(p))) };
 })();

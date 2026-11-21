@@ -46,6 +46,7 @@
       <h3>Overlay</h3>
       <select id="overlay">
         <option value="none">None</option>
+        <option value="coords">Tile numbers</option>
         <option value="power">Power grid</option>
         <option value="land">Land value</option>
         <option value="pollution">Pollution</option>
@@ -65,6 +66,30 @@
     <div class="panel" id="inspect" hidden></div>
   </aside>
 
+  <section id="console" aria-label="Build by coordinates">
+    <div class="crow">
+      <span id="cTool" class="ctool">Road</span>
+      <div class="coord">
+        <label id="fromLabel" for="x1">From</label>
+        <input id="x1" type="number" inputmode="numeric" min="0" max="63" placeholder="X" aria-label="From X">
+        <input id="y1" type="number" inputmode="numeric" min="0" max="63" placeholder="Y" aria-label="From Y">
+      </div>
+      <div class="coord" id="toGroup">
+        <label for="x2">To</label>
+        <input id="x2" type="number" inputmode="numeric" min="0" max="63" placeholder="X" aria-label="To X">
+        <input id="y2" type="number" inputmode="numeric" min="0" max="63" placeholder="Y" aria-label="To Y">
+      </div>
+      <button id="btnBuild" type="button">Build</button>
+    </div>
+    <form id="cmdForm" class="crow">
+      <span class="prompt">&gt;</span>
+      <input id="cmd" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+        placeholder="or type: road 10 10 to 20 10" aria-label="Command">
+      <button type="submit">Run</button>
+    </form>
+    <div id="cHint"></div>
+  </section>
+
   <div id="tooltip" hidden></div>
   <div id="toasts"></div>
 
@@ -78,17 +103,26 @@
 
   <div class="modal" id="helpModal" hidden>
     <div class="card">
-      <h2>How to build your city</h2>
+      <h2>Build by coordinates</h2>
+      <p>In Cord City you place every road and building by its map coordinates. The <span class="xc">yellow numbers</span> along the map edges are <b>X</b>, and the <span class="yc">blue numbers</span> are <b>Y</b>. Bright grid lines mark every 10 tiles.</p>
       <ol>
-        <li><b>Build a power source</b>: a coal plant or wind turbines.</li>
-        <li><b>Lay roads.</b> Drag to draw them. Roads also carry power.</li>
-        <li><b>Zone land</b> near roads: <span class="r">Residential</span>, <span class="c">Commercial</span>, <span class="i">Industrial</span>. Drag to paint an area.</li>
-        <li>Zones grow when they have <b>power</b>, a <b>road within 3 tiles</b>, and <b>demand</b> (see the R/C/I bars).</li>
-        <li>Add <b>parks, schools, police and fire stations</b> to raise land value, which lets buildings grow taller.</li>
-        <li>Keep housing away from factory pollution. Watch your budget and taxes.</li>
+        <li><b>Pick a tool</b> from the toolbar.</li>
+        <li><b>Enter From X, Y.</b> For roads, power lines, zones and bulldozing, also enter <b>To X, Y</b> to cover a line or a rectangle.</li>
+        <li><b>Check the preview</b> on the map, then press <b>Build</b>. After a road segment is built, its end point becomes the next segment's start.</li>
       </ol>
-      <p class="keys"><b>On a phone:</b> pick a tool from the bottom bar, then drag one finger to build. Use two fingers to pan and pinch to zoom. With 🔍 Inspect selected, one finger pans the map and a tap shows tile info. The 📊 button shows demand, overlays and taxes.</p>
-      <p class="keys"><b>Controls:</b> left-drag builds · right/middle-drag or WASD pans · scroll or pinch zooms · Space pauses · Esc cancels · 1–9 select tools</p>
+      <p>You can also type commands in the console. Separate several commands with <code>;</code>:</p>
+      <pre class="cmds">coal 30 36
+road 20 30 to 40 30
+res 21 26 to 30 29
+com 21 31 to 26 33
+ind 34 31 to 39 34
+park 31 26
+bulldoze 25 27 to 26 28
+goto 32 32
+pause / play / help</pre>
+      <p>Other buildings: <code>wind</code>, <code>police</code>, <code>fire</code>, <code>school</code>, <code>line</code> (power line), <code>trees</code>, <code>inspect X Y</code>.</p>
+      <p><b>Growing the city:</b> zones grow when they have power, a road within 3 tiles, and demand (the R/C/I bars). Parks, schools, police and fire stations raise land value. Keep homes away from factory smoke.</p>
+      <p class="keys"><b>Moving the map:</b> drag to pan, scroll or pinch to zoom, tap a tile to see its coordinates and details. Keys: <code>/</code> focuses the console, ↑ and ↓ recall earlier commands, Space pauses, Esc clears.</p>
       <button class="close">Let's build</button>
     </div>
   </div>
