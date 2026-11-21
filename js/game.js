@@ -1055,16 +1055,39 @@
   let pan = null, pinch = null;
   const tooltip = document.getElementById('tooltip');
 
-  // The map is only for looking: drag pans, pinch/scroll zooms, tap inspects.
-  // Building happens through coordinates in the build console.
+  // Two ways to build, kept in sync:
+  //  - drag on the map with a build tool: the console's From/To boxes fill in live, release to build
+  //  - type coordinates or commands in the console
+  // With Inspect selected, dragging pans and a tap inspects. Two fingers, right or middle drag always pan.
+  let drag = null;   // { start, end } tile indices while dragging with a build tool
+
+  function syncDragFields() {
+    const a = drag.start, b = drag.end;
+    if (currentTool.mode === 'single') {
+      fields[0].value = b % W; fields[1].value = (b / W) | 0; fields[2].value = ''; fields[3].value = '';
+    } else {
+      fields[0].value = a % W; fields[1].value = (a / W) | 0;
+      fields[2].value = a === b ? '' : b % W; fields[3].value = a === b ? '' : (b / W) | 0;
+    }
+    $('cmd').value = '';
+    refreshPreview(formOrder());
+  }
+  function cancelDrag() { if (drag) { drag = null; clearConsole(); } }
+
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 2) {
-      pan = null;
+      pan = null; cancelDrag();
       const [p1, p2] = [...pointers.values()];
       pinch = { d: Math.hypot(p1.x - p2.x, p1.y - p2.y), mx: (p1.x + p2.x) / 2, my: (p1.y + p2.y) / 2 };
+      return;
+    }
+    const i = screenToTile(e.clientX, e.clientY);
+    if (e.button === 0 && currentTool.id !== 'inspect' && i >= 0) {
+      drag = { start: i, end: i };
+      syncDragFields();
       return;
     }
     pan = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false, click: e.button === 0 };
@@ -1086,12 +1109,18 @@
       if (pan.moved) { cam.x = pan.cx + dx; cam.y = pan.cy + dy; }
     }
     hoverTile = screenToTile(e.clientX, e.clientY);
+    if (drag && hoverTile >= 0 && hoverTile !== drag.end) { drag.end = hoverTile; syncDragFields(); }
     updateTooltip(e.clientX, e.clientY, e.pointerType);
   });
   const endPointer = e => {
     pointers.delete(e.pointerId);
-    canvas.style.cursor = 'grab';
+    canvas.style.cursor = currentTool.id === 'inspect' ? 'grab' : 'crosshair';
     if (pinch) { if (pointers.size < 2) pinch = null; return; }
+    if (drag) {
+      if (e.type === 'pointerup') { drag = null; buildFromForm(); }
+      else cancelDrag();
+      return;
+    }
     if (pan) {
       if (pan.click && !pan.moved && e.type === 'pointerup') {
         const i = screenToTile(e.clientX, e.clientY);
@@ -1117,6 +1146,12 @@
     if (hoverTile < 0 || ptype !== 'mouse') { tooltip.hidden = true; return; }
     tooltip.hidden = false; tooltip.className = '';
     tooltip.textContent = `X ${hoverTile % W}  Y ${(hoverTile / W) | 0}`;
+    if (drag && pending) {
+      let n = 0, cost = 0;
+      for (const i of pending.tiles) if (canPlaceAt(pending.tool, i)) { n++; cost += costAt(pending.tool, i); }
+      tooltip.textContent += n ? `  ·  ${n} tile${n === 1 ? '' : 's'}, ${fmtMoney(cost)}` : '  ·  blocked';
+      if (!n || cost > S.funds) tooltip.className = 'bad';
+    }
     tooltip.style.left = sx + 16 + 'px'; tooltip.style.top = sy + 16 + 'px';
   }
 
@@ -1129,7 +1164,7 @@
     keys.add(e.key.toLowerCase());
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); keys.delete('z'); undo(); return; }
     if (e.key === ' ') { e.preventDefault(); setSpeed(S.speed ? 0 : 1); }
-    if (e.key === 'Escape') clearConsole();
+    if (e.key === 'Escape') { drag = null; clearConsole(); }
     if (e.key === '/' || e.key === 'Enter') { e.preventDefault(); $('cmd').focus(); }
     if (e.key === '+' || e.key === '=') zoomAt(vw / 2, vh / 2, cam.z * 1.2);
     if (e.key === '-') zoomAt(vw / 2, vh / 2, cam.z / 1.2);
@@ -1153,7 +1188,7 @@
   function selectTool(id) {
     currentTool = toolById[id];
     toolbar.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tool === id));
-    canvas.style.cursor = 'grab';
+    canvas.style.cursor = id === 'inspect' ? 'grab' : 'crosshair';
     $('cTool').textContent = currentTool.full || currentTool.label;
     $('toGroup').hidden = currentTool.mode === 'single';
     $('fromLabel').textContent = currentTool.mode === 'single' ? 'At' : 'From';

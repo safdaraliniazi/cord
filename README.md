@@ -1,6 +1,6 @@
 # Cord City
 
-An isometric city-building sim for the browser where **you build by coordinates**. There's no dragging: every road, zone and building is placed by typing its X/Y position on a graph-paper map, either in a simple From/To form or as text commands.
+An isometric city-building sim for the browser with **two ways to build**: drag on the map, or type coordinates. The two stay in sync: while you drag, the console fills in the exact From/To coordinates, and anything you can drag you can also type as a command.
 
 Pixel-art graphics drawn in code (`js/sprites.js`, preview in `sprites.html`). Plain HTML5 Canvas and JavaScript, with no dependencies and no build step.
 
@@ -48,8 +48,8 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 
 | Action | Input |
 | --- | --- |
-| Build / zone | Coordinates in the build console |
-| Pan | Drag the map, or WASD/arrows |
+| Build / zone | Drag on the map with a build tool, or type coordinates in the console |
+| Pan | Drag with Inspect, two fingers, right/middle drag, or WASD/arrows |
 | Inspect a tile | Tap or click it |
 | Focus the console | `/` |
 | Zoom | Mouse wheel, pinch, or `+` / `-` |
