@@ -975,7 +975,7 @@
       <div>Pollution ${meter(pol[i], false)}</div>
       <div>Crime ${meter(crime[i], false)}</div>
       <div>Police / Fire / School<br>${meter(cPol[i], true)}${meter(cFire[i], true)}${meter(cEdu[i], true)}</div>`;
-    if (!refresh) el.scrollIntoView({ block: 'nearest' });
+    if (!refresh) { if (isPhone()) setPanel(true); el.scrollIntoView({ block: 'nearest' }); }
   }
 
   function toast(msg, kind = '', where) {
@@ -1032,13 +1032,28 @@
   }
   $('btnSave').onclick = save;
   $('btnLoad').onclick = () => load(false);
+  let newArmed = 0;
   $('btnNew').onclick = () => {
-    if (!confirm('Start a new city? Unsaved progress will be lost.')) return;
+    if (Date.now() - newArmed > 3000) {
+      newArmed = Date.now();
+      toast('Tap ✚ again to start a new city. Unsaved progress will be lost.', 'warn');
+      return;
+    }
+    newArmed = 0;
     newCity();
   };
+  const isPhone = () => window.matchMedia('(max-width: 720px)').matches;
+  function setPanel(open) {
+    $('side').classList.toggle('open', open);
+    $('btnPanel').classList.toggle('on', open);
+  }
+  $('btnPanel').onclick = () => setPanel(!$('side').classList.contains('open'));
+  function syncTopHeight() {
+    document.documentElement.style.setProperty('--topH', $('topbar').offsetHeight + 'px');
+  }
   function newCity() {
     generate((Math.random() * 1e9) | 0);
-    cam.z = 1; centerCamera(W / 2, H / 2);
+    cam.z = isPhone() ? 0.7 : 1; centerCamera(W / 2, H / 2);
     $('tax').value = S.tax; $('taxVal').textContent = S.tax + '%';
     computeMaps(); computeStats(); setSpeed(1); updateHUD(); drawMinimap(); showInspect(-1);
   }
@@ -1067,8 +1082,8 @@
     requestAnimationFrame(frame);
   }
 
-  window.addEventListener('resize', () => { resize(); drawMinimap(); });
-  resize();
+  window.addEventListener('resize', () => { resize(); syncTopHeight(); drawMinimap(); });
+  resize(); syncTopHeight();
   if (!load(true)) { newCity(); $('helpModal').hidden = false; }
   selectTool('inspect');
   updateHUD();
